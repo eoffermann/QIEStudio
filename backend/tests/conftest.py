@@ -46,19 +46,41 @@ def db_ready() -> bool:
     return _db_reachable()
 
 
-@pytest.fixture
-def session(db_ready: bool) -> Iterator[object]:
-    """A DB session against a freshly-created schema; skips if no DB is reachable."""
+@pytest.fixture(scope="session")
+def _schema(db_ready: bool) -> Iterator[None]:
+    """Create the schema once for the whole test session (DDL is expensive: each
+    CREATE/INDEX fsyncs, so doing it per test cost ~4.5s/test). Per-test isolation is
+    handled by a fast TRUNCATE in the ``session`` fixture instead."""
     if not db_ready:
-        pytest.skip("No PostgreSQL reachable (set QIE_DATABASE_URL)")
+        yield
+        return
     from app.db import create_all, get_engine
-    from sqlmodel import Session, SQLModel
+    from sqlmodel import SQLModel
 
     create_all()
-    with Session(get_engine()) as s:
-        yield s
-    # Drop all tables to isolate tests.
+    yield
     SQLModel.metadata.drop_all(get_engine())
+
+
+@pytest.fixture
+def session(db_ready: bool, _schema: None) -> Iterator[object]:
+    """A DB session with all tables empty at test start; skips if no DB is reachable.
+
+    Isolation via ``TRUNCATE ... RESTART IDENTITY CASCADE`` (single fast transaction)
+    rather than per-test create/drop — keeps the DB suite fast (~0.05s vs ~4.5s/test)."""
+    if not db_ready:
+        pytest.skip("No PostgreSQL reachable (set QIE_DATABASE_URL)")
+    from app.db import get_engine
+    from sqlalchemy import text
+    from sqlmodel import Session, SQLModel
+
+    engine = get_engine()
+    table_names = ", ".join(f'"{t.name}"' for t in SQLModel.metadata.sorted_tables)
+    if table_names:
+        with engine.begin() as conn:
+            conn.execute(text(f"TRUNCATE TABLE {table_names} RESTART IDENTITY CASCADE"))
+    with Session(engine) as s:
+        yield s
 
 
 @pytest.fixture
