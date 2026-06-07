@@ -11,6 +11,7 @@ from app.models.integration import Integration
 from app.models.job import Job, JobInput, JobOutput
 from app.models.lora import Lora
 from app.models.prompt import Prompt, PromptImage, PromptLora
+from app.models.recipe import Recipe
 from app.models.setting import Setting
 
 __all__ = [
@@ -23,5 +24,6 @@ __all__ = [
     "Prompt",
     "PromptImage",
     "PromptLora",
+    "Recipe",
     "Setting",
 ]

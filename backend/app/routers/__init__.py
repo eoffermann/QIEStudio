@@ -14,6 +14,9 @@ even while some routers are still being built. Router→prefix contract:
     integrations  -> /api/integrations
     jobs          -> /api/jobs  (+ WS /ws/jobs/{id})
     rewriter      -> /api/rewriter
+    recipes       -> /api/recipes
+    tools         -> /api/tools  (background-removal, upscale/refine)
+    export        -> /api/export (catalog/batch export)
 """
 
 # Modules that app.main will try to include, in order. Add to this list when a new router
@@ -29,4 +32,7 @@ ROUTER_MODULES: list[str] = [
     "app.routers.integrations",
     "app.routers.jobs",
     "app.routers.rewriter",
+    "app.routers.recipes",
+    "app.routers.tools",
+    "app.routers.export",
 ]
