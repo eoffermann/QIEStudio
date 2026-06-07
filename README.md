@@ -73,7 +73,9 @@ including the disclosed decision records described above.
   the generated source once the build has run.
 - **If you want the experiment:** start with `RUN.md` to understand the rules of the
   autonomous run, then follow `PROGRESS_DIARY.md` chronologically to watch the application
-  take shape and to see every judgment call the agent made — and why.
+  take shape and to see every judgment call the agent made — and why. (Note: the diary is
+  only present in branches - look for a branch with a datestamp and switch to that. We do not
+  update the main branch. It's a starting point that we can use for reproducibility.
 
 ---
 
