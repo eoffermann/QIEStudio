@@ -330,3 +330,52 @@ Two parallel agents (disjoint files; router slots pre-reserved by me) completed 
 - **Reconcile on resume:** if interrupted, re-run `docker compose --profile full build
   backend` (layer cache resumes). The dev-image unit suite is the fast regression gate:
   `docker compose --profile test run --rm backend-dev pytest`.
+
+---
+
+## Entry 6 — Resume after power outage
+
+- **Local time:** 2026-06-07 11:49 PDT
+- **Commit at resume:** `b29ccf0` (HEAD) + uncommitted local edits (see below).
+
+### Context
+A power outage interrupted the run during the **real GPU smoke test** (task #7). This entry
+records the reconciled state and the two screen-caps the operator took while relaunching the
+agent (`claude --dangerously-skip-permissions --continue` from `H:\QwenImageEdit`).
+
+### Resume screen-caps
+![Anaconda Prompt relaunching the agent to continue the run](images/Screenshot%202026-06-07%20114336.png)
+*Relaunching: `cd QwenImageEdit` → `claude --dangerously-skip-permissions --continue` (note
+~4.19 TB free on H:, ample for the model weights).*
+
+![Claude Code TUI at resume, showing the pre-outage smoke-run status and the resume prompt](images/Screenshot%202026-06-07%20114849.png)
+*The session resuming: the last pre-outage status (advisor recommended **fp8** at 1024 on the
+48 GB A6000; bf16+offload smoke run in flight, Qwen weights downloading) and the operator's
+power-outage resume prompt.*
+
+### Reconciled state (what survived / what was interrupted)
+- **Code:** all committed through `b29ccf0`. Uncommitted local edits that survived the
+  outage and are still pending (part of in-progress task #7): `CLAUDE.md` (populated the
+  Commands section) and `backend/scripts/smoke_generate_edit.py` (added the `--offload`
+  flag). These will land with the task-#7 completion commit.
+- **Models:** `./models` holds **~33 GB** of a partial Qwen-Image download (of ~100 GB for
+  both bf16 models). HF caches are resumable (`.incomplete` blobs), so re-running continues
+  rather than restarting.
+- **Smoke run:** did **not** complete — no outputs in `./data` or `./images` (no
+  `generate_*.png`/`edit_*.png`/`smoke_summary`). The bf16 Generate→Edit loop must be re-run.
+- **Containers:** all stopped by the outage, including Postgres `db`. The `pgdata` volume and
+  the migrated `qie` schema persist on disk.
+
+### Resume plan (task #7, continued)
+1. Restart the `db` service (`docker compose up -d db`); the `qie` schema is already migrated
+   (initial + recipe) on the persistent `pgdata` volume.
+2. Re-launch the real **Generate→Edit** smoke loop in the CUDA image **via PowerShell** (not
+   Git-Bash — MSYS mangled `/models`→`C:/Program Files/Git/models` last time; fixed by using
+   PowerShell so `-e HF_HOME=/models` and the `-v …:/models` mount resolve correctly). The
+   partial download resumes from the `./models` cache.
+3. Given the advisor recommends **fp8** at 1024 on this 48 GB card, run the acceptance loop at
+   the recommended precision (and validate bf16 with offload + fp8-emulated-on-Ampere as the
+   exercise across precisions; int4/Nunchaku is expected unavailable — the PyPI `nunchaku` is
+   a placeholder — so the int4 guard test should report it cleanly).
+4. Commit the resulting output images to `./images/` with their reproducibility metadata, then
+   finish docs sync (CLAUDE.md/DESIGN.md) and the final diary entry.
