@@ -48,6 +48,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     with phase(log, "Starting in-process job queue worker"):
         get_job_queue()
 
+    # Wire the progress hub to this event loop so the (sync) worker thread can push
+    # WebSocket updates, then re-enqueue any interrupted jobs (resumability, RUN §7).
+    try:
+        import asyncio
+
+        from app.services.progress_hub import get_progress_hub
+
+        get_progress_hub().set_loop(asyncio.get_running_loop())
+        from app.services.job_service import recover_jobs
+
+        with phase(log, "Recovering queued/running jobs"):
+            recover_jobs()
+    except Exception:  # noqa: BLE001 — never let recovery abort startup
+        log.exception("Job recovery skipped (continuing)")
+
     if settings.warmup_on_startup:
         log.info("Warm-up enabled — first pipeline load will happen now (may be slow)")
         # Pipeline warm-up is delegated to the pipeline service if present.
@@ -101,6 +116,14 @@ def create_app() -> FastAPI:
     )
 
     _include_routers(app)
+
+    # Expose the spec's top-level WebSocket path (DESIGN §7: WS /ws/jobs/{id}) in addition
+    # to the prefixed router route, if the jobs router is present.
+    if importlib.util.find_spec("app.routers.jobs") is not None:
+        from app.routers.jobs import job_ws
+
+        app.add_api_websocket_route("/ws/jobs/{job_id}", job_ws)
+        log.info("Mounted WebSocket /ws/jobs/{job_id}")
 
     # Serve the built SPA as static assets if present (DESIGN §4.2). Mounted last so it
     # doesn't shadow /api routes.
