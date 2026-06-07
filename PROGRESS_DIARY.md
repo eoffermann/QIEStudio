@@ -167,3 +167,58 @@ none edit shared foundation files, `conftest.py`, or `pyproject.toml`):
 The integrative layer (jobs router + worker + WebSocket, batch/sweep, reproducibility
 sidecar, prompt enhancer, round-out) I build myself afterward, once the real service APIs
 exist, then run the full suite + Docker + GPU smoke tests.
+
+---
+
+## Entry 3 — Wave 1 backend subsystems landed (5 of 6 agents)
+
+- **Local time:** 2026-06-07 10:05 PDT
+- **Commit:** `e50cc36` (backend subsystems). Frontend agent (F) still running in background.
+
+### What I did / outcome
+Launched 5 backend agents in parallel (A–E) on disjoint files; all returned green and the
+combined suite integrates cleanly. Frontend agent (F) launched in the background (still
+working). Landed commit `e50cc36`:
+- **A** device_manager + model_advisor + resolution (+ routers): 31 unit tests. Verified the
+  spec example `1024/landscape/3:2 -> 1024×688`; advisor filters int4 to CUDA-Ampere, flags
+  fp8 "emulated on SM<8.9", MPS→bf16-only.
+- **B** asset_store (+ router): 12 tests. EXIF transpose + RGB normalize + HEIC opener,
+  sha256 dedup, WebP thumbnails, PNG metadata embed + JSON sidecar.
+- **C** prompt_store (+ router): 17 tests. CRUD/duplicate/atomic bindings + `resolve_inputs`
+  (pinned+slot ordering, min/max validation). Found+fixed 2 real bugs (ARRAY `@>` filter;
+  child-delete flush order).
+- **D** lora_manager + civitai + integrations (+ routers): 52 tests. CivitAI `.com/.red/.green`
+  normalization across URL/query/bare-id forms; Fernet-encrypted keys never echoed.
+- **E** pipeline_service + reproducibility: 23 pure tests; module imports without torch; GPU
+  tests skip cleanly. Lazy torch/diffusers; bf16/fp8(quanto)/int4(nunchaku) paths; LoRA
+  stacking; throttled latent→preview; cooperative cancel.
+- **main.py** auto-includes all 8 routers (verified in startup logs); jobs + rewriter
+  correctly still pending.
+
+### Verification evidence
+- `pytest` (full, single DB) → **exit 0**: 140 passed, 1 skipped (`test_pipeline_gpu`, no GPU
+  in dev image). `ruff check .` → clean.
+
+### Decision Log — D3: per-agent test databases + fast test isolation
+- **Context:** 6 agents running tests concurrently against one Postgres collided on
+  `create_all`/`drop_all`; and that per-test DDL cost ~4.5s/test (Alpine PG fsyncs each of
+  ~40 CREATE/INDEX statements), making the full suite look "hung" behind a buffered pipe.
+- **Options:** (a) keep per-test create/drop (too slow + collision-prone); (b) per-agent DBs
+  + transaction-rollback isolation; (c) per-agent DBs + per-test `TRUNCATE`.
+- **Decision:** created DBs `qie_a..qie_e` (one per agent, via `QIE_DATABASE_URL` override in
+  the test command) to remove cross-agent collisions, and rewrote the shared `session`
+  fixture to **create the schema once per session** and isolate each test with a single fast
+  `TRUNCATE ... RESTART IDENTITY CASCADE`.
+- **Outcome:** DB test setup dropped from ~4.5s to ~0.05s; full suite runs in seconds; exit 0.
+
+### State / resumability
+- **Done:** wave-1 backend subsystems (`e50cc36`), all green + lint-clean.
+- **In progress:** frontend agent F (background) building `frontend/` (Vite/React/TS/Tailwind
+  v4/shadcn) — its files are NOT yet committed (excluded from `e50cc36` until it finishes).
+  I am now hand-building the **jobs integration layer** (job_service + ProgressHub + jobs
+  router + WebSocket + batch/sweep) — `app/schemas/jobs.py` already written.
+- **Next:** finish jobs subsystem (task #4 integration), then prompt enhancer + round-out
+  (task #5), wire/commit the frontend when F lands, then Docker CUDA image + real GPU
+  Generate→Edit smoke tests (task #7).
+- **Reconcile on resume:** `db` container up; DBs `qie`,`qie_a..e` exist. Models not yet
+  downloaded. If F's frontend files are present but uncommitted, that is expected.
