@@ -104,3 +104,5 @@ architected to stay open to multi-user and cloud deployment later.
 I will open a new shell, and launch Claude with `claude --dangerously-skip-permissions`
 
 Once Claude is live, I enter `Open RUN.md and do as instructed. Launch as large of an agent swarm as you can, to perform as many parallelizable tasks in tandem as possible.`
+
+![Screenshot](images/Screenshot%202026-06-07%20085914.png)
