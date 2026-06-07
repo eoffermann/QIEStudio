@@ -99,3 +99,8 @@ architected to stay open to multi-user and cloud deployment later.
 
 > **Status:** specification complete; autonomous implementation pending. Watch
 > `PROGRESS_DIARY.md` for the build as it happens.
+
+# My Sole Instruction
+I will open a new shell, and launch Claude with `claude --dangerously-skip-permissions`
+
+Once Claude is live, I enter `Open RUN.md and do as instructed. Launch as large of an agent swarm as you can, to perform as many parallelizable tasks in tandem as possible.`
