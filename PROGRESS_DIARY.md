@@ -222,3 +222,57 @@ working). Landed commit `e50cc36`:
   Generate→Edit smoke tests (task #7).
 - **Reconcile on resume:** `db` container up; DBs `qie`,`qie_a..e` exist. Models not yet
   downloaded. If F's frontend files are present but uncommitted, that is expected.
+
+---
+
+## Entry 4 — Jobs integration layer + frontend landed
+
+- **Local time:** 2026-06-07 10:55 PDT
+- **Commits:** `b432be0` (jobs subsystem + vendored prompt templates), `58f53bd` (frontend).
+
+### What I did / outcome
+Hand-built the integrative jobs layer (the piece that wires all the wave-1 services into a
+real run) and landed the frontend the background agent produced.
+
+**Jobs subsystem (`b432be0`)** — `job_service` + `progress_hub` + `routers/jobs`:
+- Submit-time resolution: ordered Edit inputs from prompt slots (pinned + slot fills) or
+  explicit ids, concrete `W×H` (incl. match-source), model/precision/device, LoRA
+  validation → persists a `Job` + ordered `JobInput` rows (with input hashes).
+- `run_job` on the single-accelerator worker: loads/reuses the pipeline, streams throttled
+  progress + base64 live latent previews over the `ProgressHub`, saves each output through
+  `asset_store` with full §5.5 reproducibility metadata embedded, persists status
+  transitions, handles cancel + errors without crashing the worker.
+- `recover_jobs` re-enqueues `queued`/`running` jobs on startup (resumability, RUN §7).
+- REST: `POST /api/jobs`, `/api/jobs/batch`, `GET /api/jobs[/{id}]`, cancel, output
+  file/thumb streaming. WebSocket `/ws/jobs/{id}` (top-level alias wired in `main.py`) sends
+  a snapshot on connect then live updates until terminal.
+- Batch/sweep (§5.6): slot / seed / param expansion under a shared `batch_id`.
+- 8 new tests (resolution, slot ordering, batch expansion, queued cancel, hub, WS snapshot).
+
+**Vendored templates** — copied the official `prompt_utils.py` + `prompt_utils_2512.py`
+**verbatim** (pinned commit `3453042`, 2025-12-23) under `app/services/vendor/` with a
+`NOTICE.md`; excluded from ruff/mypy. Ready for the §5.8 enhancer (which will extract the
+`SYSTEM_PROMPT`/`EDIT_SYSTEM_PROMPT` strings and run them through a local Qwen-VL model).
+
+**Frontend (`58f53bd`)** — Vite 6 / React 19 / TS strict / Tailwind v4 / shadcn / Framer
+Motion / TanStack Query + Zustand. Composer (the full core loop incl. drag-to-reorder, live
+advisor, resolution chip, enhance diff, WS progress + live preview, result gallery + compare
+slider), libraries, history, settings/integrations, ⌘K palette, dark-first theming. Stubs
+noted: slot/binding visual editor, default-model settings panel, slot/param sweep UI.
+`npm run build` green (dist ≈ 897 KB code-split).
+
+### Verification evidence
+- Full backend suite (single DB): **148 passed, 1 skipped** (`test_pipeline_gpu`), `ruff
+  check .` clean. main.py auto-includes all 9 routers + mounts `/ws/jobs/{id}` (verified in
+  startup logs). Frontend `npm run build` green.
+
+### State / resumability
+- **Done (committed + pushed up to here):** foundation, wave-1 backend subsystems, jobs
+  integration, frontend. Tasks #1–#4, #6 complete.
+- **Next:** (#5) prompt enhancer (Qwen-VL, using the vendored templates) + round-out
+  features (rembg background removal, upscale/refine, recipes, catalog export) — launching an
+  agent; and (#7) CUDA Docker image + real Generate→Edit GPU smoke tests — building the
+  Dockerfile and kicking off the (long) image build in parallel.
+- **Reconcile on resume:** containers `qwenimageedit-db-1` up; no model weights downloaded
+  yet (the first GPU run will pull Qwen-Image / Qwen-Image-Edit-2511 into the `/models`
+  volume — tens of GB). The CUDA image build, once started, is long-running.
