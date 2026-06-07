@@ -38,13 +38,18 @@ dependencies = [
 # host/dev install can pull a CPU build if desired.
 inference = [
     "torch>=2.5",
-    "diffusers>=0.32",
-    "transformers>=4.47",
+    # Pinned to 0.36.x: this is the version Nunchaku (SVDQuant int4) targets — its Qwen
+    # transformer needs the `txt_seq_lens` kwarg that the QwenImagePipeline passes in 0.36 but
+    # dropped in 0.38 (which broke int4 with "max_txt_seq_len/txt_seq_lens must be provided").
+    # 0.36 still ships QwenImageEditPlusPipeline for the 2511 Edit path. (DESIGN §9.4)
+    "diffusers>=0.36,<0.37",
+    "transformers>=4.54",
     "accelerate>=1.2",
     "peft>=0.14",
     "safetensors>=0.4.5",
+    # fp8 uses optimum-quanto. torchao was intentionally REMOVED: it is unused here and its
+    # build broke diffusers 0.36's torchao integration import (DESIGN §9.4).
     "optimum-quanto>=0.2.6",
-    "torchao>=0.7",
     "rembg[gpu]>=2.0.59",
     "onnxruntime-gpu>=1.20",
 ]

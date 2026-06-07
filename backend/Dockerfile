@@ -51,10 +51,13 @@ COPY backend/pyproject.toml /app/pyproject.toml
 COPY backend/app/__init__.py /app/app/__init__.py
 RUN pip install -e ".[inference]"
 
-# 3) Best-effort Nunchaku (SVDQuant int4, CUDA-only). If no compatible prebuilt wheel exists
-#    for this Python/torch/CUDA combo, continue without it — int4 is then reported
-#    unavailable and the advisor/pipeline degrade gracefully (DESIGN §9.1).
-RUN pip install nunchaku || echo "WARN: nunchaku not installed; int4 path will be unavailable"
+# 3) Nunchaku (SVDQuant int4/fp4, CUDA-only) — the workstation/gaming-card path (DESIGN §9.1).
+#    Pinned prebuilt wheel matched to this Python (cp313) + torch (2.12) combo; the cu12.8
+#    build is runtime-compatible with the torch cu126 runtime (CUDA 12.x minor compat,
+#    validated on the A6000). NOTE: the PyPI `nunchaku` is an unrelated placeholder — do not
+#    use it. Update NUNCHAKU_WHEEL when bumping torch/python. (DESIGN §9.4)
+ARG NUNCHAKU_WHEEL=https://github.com/nunchaku-ai/nunchaku/releases/download/v1.3.0dev20260306/nunchaku-1.3.0.dev20260306%2Bcu12.8torch2.12-cp313-cp313-linux_x86_64.whl
+RUN pip install "${NUNCHAKU_WHEEL}"
 
 # 4) Application source + built SPA.
 COPY backend/ /app/

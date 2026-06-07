@@ -48,6 +48,9 @@ def test_a6000_offers_int4_and_fp8_emulated_caveat() -> None:
     fp8 = _opt(advice, "fp8")
     assert fp8.available is True
     assert any("emulated" in c for c in fp8.caveats)
+    # Both fp8 and int4 fit comfortably on 48 GB, but fp8 is emulated here (no speedup) while
+    # int4 has native Nunchaku kernels — so int4 must be the recommendation on Ampere.
+    assert advice.recommended == "int4"
 
 
 def test_h100_recommends_bf16() -> None:

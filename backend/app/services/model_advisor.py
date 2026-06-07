@@ -15,8 +15,10 @@ Backend filtering (DESIGN §4.3 / §9.2):
 - **int4 (Nunchaku)** is never offered unless ``device.supports_int4_nunchaku`` (CUDA only).
 - **fp8** is offered on CUDA even below SM 8.9, but flagged "emulated — no speedup" when
   ``not device.supports_fp8_native``. On MPS only bf16 is offered.
-- The recommended option is the smallest-footprint precision with comfortable headroom,
-  preferring bf16 when it fits comfortably, else fp8, else int4.
+- The recommended option prefers bf16 when it has comfortable headroom; otherwise it picks
+  among the quantized options that fit — preferring **native int4 over *emulated* fp8** on
+  SM < 8.9 (int4 gives real Nunchaku speedup + lower VRAM there), and fp8 when fp8 is native
+  (Ada/Hopper). See :func:`_choose_recommended`.
 """
 
 from __future__ import annotations
@@ -232,7 +234,7 @@ def advise(
             )
         )
 
-    recommended = _choose_recommended(fits_comfortably, options)
+    recommended = _choose_recommended(fits_comfortably, options, dev)
     options = _apply_recommended_status(options, recommended)
 
     log.info(
@@ -250,15 +252,30 @@ def advise(
 def _choose_recommended(
     fits_comfortably: dict[str, int],
     options: list[PrecisionOption],
+    dev: DeviceInfo,
 ) -> str | None:
     """Pick the recommended precision (DESIGN §9.2).
 
-    Prefer bf16 when it has comfortable headroom, else fp8, else int4. If nothing fits
-    comfortably, fall back to the *tight* option with the largest headroom (best effort).
+    Prefer **bf16** when it has comfortable headroom (best quality, ample VRAM). Otherwise
+    choose among the quantized options that fit comfortably: when **fp8 is emulated** on this
+    architecture (SM < 8.9 — no compute speedup, only memory savings) and **native int4** is
+    available, prefer **int4** (real Nunchaku speedup *and* lower VRAM — the right call for
+    Ampere/workstation/gaming cards). When fp8 is native (Ada/Hopper), prefer fp8 for its
+    near-bf16 quality. If nothing fits comfortably, fall back to the smallest tight option.
     """
-    for precision in ("bf16", "fp8", "int4"):
-        if precision in fits_comfortably:
-            return precision
+    if "bf16" in fits_comfortably:
+        return "bf16"
+
+    fp8_ok = "fp8" in fits_comfortably
+    int4_ok = "int4" in fits_comfortably
+    if fp8_ok and int4_ok:
+        if not dev.supports_fp8_native and dev.supports_int4_nunchaku:
+            return "int4"  # emulated fp8 has no speedup; native int4 wins on speed + VRAM
+        return "fp8"
+    if fp8_ok:
+        return "fp8"
+    if int4_ok:
+        return "int4"
 
     # Nothing comfortable — recommend the tightest-fitting (>= 0 headroom) option, if any,
     # preferring smaller footprints which are likelier to fit.

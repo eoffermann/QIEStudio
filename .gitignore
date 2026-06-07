@@ -34,3 +34,6 @@ Thumbs.db
 # NOTE: the project's own test-output images under images/ ARE committed on purpose
 # (RUN.md §5 requires committing smoke-test outputs), so images/ is intentionally
 # NOT ignored.
+
+# Local nunchaku wheel cache + scratch test scripts (large; fetched at build/runtime)
+wheels/

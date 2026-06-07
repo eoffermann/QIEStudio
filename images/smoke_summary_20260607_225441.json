@@ -1,0 +1,68 @@
+{
+  "precision": "int4",
+  "steps": 30,
+  "size": 1024,
+  "device": "NVIDIA RTX A6000",
+  "generate": {
+    "job_id": "b900d87937154c86b8fd8f4618fcbf15",
+    "file": "generate_20260607_223834.png",
+    "metadata": {
+      "app": "QIE Studio",
+      "mode": "generate",
+      "seed": 12345,
+      "loras": [],
+      "device": "cuda:0 (NVIDIA RTX A6000, SM 8.6)",
+      "prompt": "a single ripe red apple on a plain white studio table, soft lighting, high detail product photograph",
+      "sampler": {
+        "guidance_scale": 1.0,
+        "true_cfg_scale": 4.0,
+        "num_inference_steps": 30
+      },
+      "model_id": "Qwen/Qwen-Image",
+      "precision": "int4",
+      "resolution": {
+        "width": 1024,
+        "height": 1024
+      },
+      "input_hashes": [],
+      "output_format": "png",
+      "model_revision": null,
+      "rewriter_model": null,
+      "schema_version": 1,
+      "enhanced_prompt": null,
+      "negative_prompt": " "
+    }
+  },
+  "edit": {
+    "job_id": "04bb5e33e16e4e66b6bf2619dc088706",
+    "file": "edit_20260607_225441.png",
+    "metadata": {
+      "app": "QIE Studio",
+      "mode": "edit",
+      "seed": 777,
+      "loras": [],
+      "device": "cuda:0 (NVIDIA RTX A6000, SM 8.6)",
+      "prompt": "place the apple on a rustic wooden cutting board in a cozy kitchen, warm morning light",
+      "sampler": {
+        "guidance_scale": 1.0,
+        "true_cfg_scale": 4.0,
+        "num_inference_steps": 30
+      },
+      "model_id": "Qwen/Qwen-Image-Edit-2511",
+      "precision": "int4",
+      "resolution": {
+        "width": 1024,
+        "height": 1024
+      },
+      "input_hashes": [
+        "12489e868fba31218d0caacfcea130e6c375243dba6e98cdf4de6ec9602060c3"
+      ],
+      "output_format": "png",
+      "model_revision": null,
+      "rewriter_model": null,
+      "schema_version": 1,
+      "enhanced_prompt": null,
+      "negative_prompt": " "
+    }
+  }
+}

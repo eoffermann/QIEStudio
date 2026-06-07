@@ -55,6 +55,30 @@ EDIT_DEFAULT_NUM_IMAGES_PER_PROMPT = 1
 # Decode the live preview at a reduced size to keep the throttled VAE decode cheap.
 _PREVIEW_MAX_EDGE = 256
 
+# Default Nunchaku SVDQuant sources per base model (DESIGN §9.1 / §9.4). A single
+# pre-quantized transformer safetensors replaces the base DiT. ``{prec}`` is filled from
+# nunchaku's get_precision() (int4 on Ampere/Ada, fp4 on Blackwell); ``{rank}`` is the
+# SVDQuant rank (128=quality, 32=speed). Override/extend via QIE_NUNCHAKU_QUANT_SOURCES.
+_DEFAULT_NUNCHAKU_SOURCES: dict[str, str] = {
+    "Qwen/Qwen-Image": (
+        "nunchaku-tech/nunchaku-qwen-image/svdq-{prec}_r{rank}-qwen-image.safetensors"
+    ),
+    "Qwen/Qwen-Image-Edit": (
+        "nunchaku-tech/nunchaku-qwen-image-edit/"
+        "svdq-{prec}_r{rank}-qwen-image-edit.safetensors"
+    ),
+    "Qwen/Qwen-Image-Edit-2509": (
+        "nunchaku-tech/nunchaku-qwen-image-edit-2509/"
+        "svdq-{prec}_r{rank}-qwen-image-edit-2509.safetensors"
+    ),
+    # Community SVDQuant of Edit-2511 (official weights pending upstream issue #858). The
+    # 2511 filenames use a tier suffix rather than rank, so {rank} is unused here.
+    "Qwen/Qwen-Image-Edit-2511": (
+        "QuantFunc/Nunchaku-Qwen-Image-EDIT-2511/"
+        "nunchaku_qwen_image_edit_2511_balance_{prec}.safetensors"
+    ),
+}
+
 
 # --- Data transfer objects -------------------------------------------------------------
 
@@ -388,35 +412,41 @@ class PipelineService:
         device: str,
         offload: bool = False,
     ) -> Any:
-        """Load a Nunchaku SVDQuant int4 pipeline (CUDA-only) (DESIGN §9.1).
+        """Load a Nunchaku **SVDQuant int4** pipeline (CUDA-only) (DESIGN §9.1).
 
-        Nunchaku ships a pre-quantized SVDQuant transformer that is swapped into the base
-        pipeline. The pre-quantized weights are a separate artifact; if nunchaku or the
-        weights are unavailable, raise a clear :class:`NotImplementedError` so the GPU test
-        can *skip with a reason* rather than crash mid-run.
+        Nunchaku ships a pre-quantized SVDQuant transformer (a single ``.safetensors``) that
+        replaces the base DiT; only the text encoder + VAE are fetched from the base repo, so
+        the heavy ~40 GB bf16 transformer is never downloaded/loaded. ``get_precision()``
+        picks **int4** (Ampere/Ada/most GPUs) vs **fp4** (Blackwell/RTX 50xx). On low-VRAM
+        cards the transformer enables block offload + sequential CPU offload so it runs on
+        gaming/workstation GPUs — the whole point of this path.
+
+        Raises a clear :class:`NotImplementedError` only when nunchaku itself is unavailable
+        or no quant source is mapped for ``model_id`` (so the advisor/UI degrade cleanly).
         """
         try:
             from nunchaku import NunchakuQwenImageTransformer2DModel
+            from nunchaku.utils import get_precision
         except Exception as exc:  # noqa: BLE001 — nunchaku is an optional CUDA-only dep
             raise NotImplementedError(
-                "Nunchaku (SVDQuant int4) is not installed. It is CUDA-only and installed "
-                "separately in the CUDA Docker image; install `nunchaku` and provide the "
-                "pre-quantized transformer to enable int4."
+                "Nunchaku (SVDQuant int4) is not installed. It is CUDA-only; the CUDA image "
+                "installs a torch/python-matched wheel. See DESIGN §9.4."
             ) from exc
 
-        with phase(log, f"Loading Nunchaku SVDQuant int4 transformer for {model_id}"):
-            try:
-                transformer = NunchakuQwenImageTransformer2DModel.from_pretrained(
-                    model_id,
-                    revision=model_revision,
-                    torch_dtype=dtype,
-                )
-            except Exception as exc:  # noqa: BLE001 — missing/incompatible quantized weights
-                raise NotImplementedError(
-                    "Could not load a Nunchaku SVDQuant int4 transformer for "
-                    f"{model_id!r}: {exc}. A pre-quantized SVDQuant artifact is required "
-                    "for int4."
-                ) from exc
+        ref = self._nunchaku_quant_ref(model_id, get_precision)
+        free_vram_mb = self._free_vram_mb()
+
+        with phase(log, f"Loading Nunchaku SVDQuant transformer {ref}"):
+            transformer = NunchakuQwenImageTransformer2DModel.from_pretrained(ref)
+
+        # Low-VRAM path (gaming/workstation cards): per-block GPU residency + sequential
+        # offload. Forced when the caller requested offload or free VRAM is tight.
+        from app.config import get_settings
+
+        low_vram = offload or (0 < free_vram_mb < get_settings().int4_offload_below_vram_mb)
+        if low_vram and hasattr(transformer, "set_offload"):
+            log.info("int4: enabling Nunchaku block offload (low-VRAM path)")
+            transformer.set_offload(True, use_pin_memory=False, num_blocks_on_gpu=1)
 
         with phase(log, f"from_pretrained({model_id}) with int4 transformer"):
             pipeline = pipeline_cls.from_pretrained(
@@ -425,9 +455,43 @@ class PipelineService:
                 transformer=transformer,
                 torch_dtype=dtype,
             )
-        if not offload and device != "cpu":
+
+        if low_vram and hasattr(pipeline, "enable_sequential_cpu_offload"):
+            pipeline.enable_sequential_cpu_offload()
+        elif device != "cpu":
             pipeline = pipeline.to(device)
         return pipeline
+
+    def _nunchaku_quant_ref(self, model_id: str, get_precision: Any) -> str:
+        """Resolve the Nunchaku pre-quantized ``repo/file.safetensors`` ref for a base model.
+
+        Sources are config-overridable (``nunchaku_quant_sources``); the defaults cover the
+        shipped Generate/Edit bases. ``{prec}`` <- get_precision(), ``{rank}`` <- int4_rank.
+        """
+        from app.config import get_settings
+
+        settings = get_settings()
+        sources = {**_DEFAULT_NUNCHAKU_SOURCES, **(settings.nunchaku_quant_sources or {})}
+        template = sources.get(model_id)
+        if template is None:
+            raise NotImplementedError(
+                f"No Nunchaku int4 quant source mapped for {model_id!r}. Map one via "
+                "QIE_NUNCHAKU_QUANT_SOURCES, or pick a model with published SVDQuant weights "
+                "(DESIGN §9.4)."
+            )
+        return template.format(prec=get_precision(), rank=settings.int4_rank)
+
+    def _free_vram_mb(self) -> int:
+        """Best-effort free VRAM in MB (0 if torch/CUDA unavailable)."""
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                free, _total = torch.cuda.mem_get_info()
+                return int(free // (1024 * 1024))
+        except Exception:  # noqa: BLE001
+            pass
+        return 0
 
     def _apply_load_options(self, pipeline: Any, *, device: str, options: LoadOptions) -> None:
         """Apply offloading / memory toggles, ignoring ones the pipeline lacks (DESIGN §9.3)."""

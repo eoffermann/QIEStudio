@@ -59,6 +59,17 @@ class Settings(BaseSettings):
     # --- Live latent previews (DESIGN §5.5) ---
     preview_every_n_steps: int = 5  # throttled latent->RGB decode cadence; 0 disables
 
+    # --- int4 / Nunchaku SVDQuant (DESIGN §9.1) ---
+    # SVDQuant rank: 128 = best quality, 32 = faster/lighter.
+    int4_rank: int = 128
+    # Below this free-VRAM figure (MB), the int4 transformer enables Nunchaku block offload +
+    # sequential CPU offload so it runs on gaming/workstation cards.
+    int4_offload_below_vram_mb: int = 18000
+    # Map a base image-model id -> the Nunchaku pre-quantized safetensors reference. Use
+    # ``{prec}`` for get_precision() (int4|fp4) and ``{rank}`` for the SVDQuant rank. Override
+    # via QIE_NUNCHAKU_QUANT_SOURCES (JSON) to add models or point at other quant repos.
+    nunchaku_quant_sources: dict[str, str] = Field(default_factory=dict)
+
     # --- Secrets ---
     # Used to derive the Fernet key that encrypts integration API keys at rest (DESIGN §5.7).
     # MUST be overridden in any real deployment; a dev default is provided so the app boots.
