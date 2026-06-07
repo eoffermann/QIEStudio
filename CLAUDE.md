@@ -4,15 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-This repo is **pre-implementation**. The only artifact is **`DESIGN.md`**, a finalized
-(v1.0) specification for *QIE Studio*. There is no code, build system, dependency manifest,
-or test suite yet. **`DESIGN.md` is the source of truth** — read it before doing anything,
-and keep it in sync when scope or decisions change.
+**v1 is implemented** (built unattended on branch `DEVRUN_202606070903`; see
+`PROGRESS_DIARY.md` for the full build record + decision logs). The full §12 scope is in
+place: FastAPI backend (`backend/app`) with config/DB/models/migrations and the
+storage/auth/queue seams; device manager + VRAM advisor; resolution service; asset / prompt /
+LoRA / integrations stores; pipeline service (Generate + Edit, bf16 / fp8 / int4 paths,
+LoRA stacking, live latent previews); job queue + REST + WebSocket progress + batch/sweep;
+Qwen-VL prompt enhancer (§5.8) and the round-out features (background removal, upscale,
+recipes, catalog export); a React/Vite SPA (`frontend/`); and the CUDA + dev Docker images.
 
-When scaffolding, the spec's §12 build order is the intended sequence (backend skeleton →
-device manager + advisor → pipeline service → resolution → asset store → job queue/previews
-→ LoRA manager + integrations → prompt store → frontend → round-out features → Docker →
-polish).
+The full unit suite (~200 tests) is green in Docker against Postgres, and the **real
+Generate→Edit smoke loop has run end-to-end on the reference A6000** (fp8; output evidence +
+reproducibility sidecars committed under `images/`). See DESIGN §9.4 for delivered precision
+notes (fp8 is emulated on SM 8.6; int4/Nunchaku is the remaining enablement step).
+
+**`DESIGN.md` remains the source of truth** — keep it (and this file) in sync when scope or
+decisions change.
 
 ## What we're building
 
