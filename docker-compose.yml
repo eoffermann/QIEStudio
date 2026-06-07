@@ -1,0 +1,69 @@
+# QIE Studio — local Compose stack (DESIGN §8).
+#   db       — PostgreSQL (persistent volume `pgdata`)
+#   backend  — FastAPI + CUDA inference, serves the built SPA (built from backend/Dockerfile)
+#
+# Apple-Silicon users run `backend` natively (MPS) and keep only `db` here (DESIGN §8).
+# Unit tests run in the lightweight `backend-dev` profile image (no CUDA download).
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: qie
+      POSTGRES_PASSWORD: qie
+      POSTGRES_DB: qie
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qie -d qie"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      QIE_DATABASE_URL: postgresql+psycopg://qie:qie@db:5432/qie
+      QIE_DATA_ROOT: /data
+      QIE_MODELS_CACHE: /models
+      HF_HOME: /models
+      QIE_SECRET_KEY: ${QIE_SECRET_KEY:-dev-insecure-change-me}
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+      - ./models:/models
+    # GPU access (NVIDIA Container Toolkit). Compose `gpus` shorthand requests all GPUs.
+    gpus: all
+    profiles: ["full"]
+
+  # Lightweight image for fast unit tests + API-layer checks (no torch/CUDA).
+  backend-dev:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.dev
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      QIE_DATABASE_URL: postgresql+psycopg://qie:qie@db:5432/qie
+      QIE_DATA_ROOT: /tmp/qie-data
+      QIE_SECRET_KEY: test-secret-key-deterministic-0123456789
+      QIE_RUN_MIGRATIONS_ON_STARTUP: "false"
+    volumes:
+      - ./backend:/app
+    working_dir: /app
+    profiles: ["test"]
+
+volumes:
+  pgdata:

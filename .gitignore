@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.env
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.log
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.local
+
+# Data & models (large binaries — never committed; mounted as volumes)
+/data/
+/models/
+backend/data/
+backend/models/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+
+# NOTE: the project's own test-output images under images/ ARE committed on purpose
+# (RUN.md §5 requires committing smoke-test outputs), so images/ is intentionally
+# NOT ignored.

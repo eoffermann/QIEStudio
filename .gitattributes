@@ -1,0 +1,27 @@
+# Normalize line endings: the repo is authored on Windows but built/run in Linux
+# Docker images. Force LF for all text so shell scripts and Python behave in-container.
+* text=auto eol=lf
+
+# Windows batch files keep CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets — never normalize or diff as text
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.heic binary
+*.heif binary
+*.ico binary
+*.safetensors binary
+*.ckpt binary
+*.bin binary
+*.pt binary
+*.pth binary
+*.onnx binary
+*.zip binary
+*.gz binary
+*.woff binary
+*.woff2 binary

@@ -1,0 +1,20 @@
+# Lightweight dev/test image for the API + unit-test layer (no torch/CUDA).
+# Used for the fast inner test loop and CI of the non-inference code. The real GPU smoke
+# tests run in the full CUDA image (backend/Dockerfile).
+FROM python:3.13-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+# Install core + dev dependencies from pyproject (without the heavy inference extra).
+COPY backend/pyproject.toml /app/pyproject.toml
+COPY backend/app/__init__.py /app/app/__init__.py
+RUN pip install -e ".[dev]"
+
+# Source is bind-mounted at runtime (see docker-compose `backend-dev`); copy as a fallback.
+COPY backend/ /app/
+
+CMD ["pytest"]
