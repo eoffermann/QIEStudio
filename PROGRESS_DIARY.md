@@ -379,3 +379,77 @@ power-outage resume prompt.*
    a placeholder — so the int4 guard test should report it cleanly).
 4. Commit the resulting output images to `./images/` with their reproducibility metadata, then
    finish docs sync (CLAUDE.md/DESIGN.md) and the final diary entry.
+
+---
+
+## Entry 7 — Real GPU smoke test PASSED (fp8 Generate→Edit on the A6000)
+
+- **Local time:** 2026-06-07 14:45 PDT
+- **Commit:** task-#7 landing (this entry committed alongside the code + output images).
+
+### What I set out to do
+Complete the §6 acceptance bar: run the real, self-contained **Generate → Edit** loop on the
+A6000 inside Docker, recording full reproducibility metadata, and commit the output images.
+
+### What happened (and the two failures I fixed first)
+1. **MSYS path-mangling (resume):** the first `docker run` via Git-Bash rewrote `-e
+   HF_HOME=/models` → `C:/Program Files/Git/models`, so weights downloaded into the
+   container's ephemeral layer. **Fix:** launch the container via **PowerShell** (no MSYS
+   conversion). Weights now persist to the mounted `./models`.
+2. **fp8 needed a compiler:** optimum-quanto JIT-compiles a CUDA kernel (`quanto_cuda`) at
+   fp8-quantization time, but the CUDA **runtime** base image had no `nvcc`/headers →
+   `nvcc: not found`. **Fix:** rebuilt the image on the CUDA **devel** base (+ `ninja`,
+   `CUDA_HOME`, `TORCH_CUDA_ARCH_LIST=8.6`). fp8 then compiled and ran.
+3. **Offload bug:** the service called `.to(cuda)` *then* `enable_model_cpu_offload()`,
+   double-placing ~40 GB and getting the bf16+offload run OOM-killed. **Fix:** defer device
+   placement — only `.to(device)` when offload is *not* requested; otherwise let accelerate
+   manage it. (Verified clean; 23 pure pipeline tests still pass.)
+
+### Result — PASSED ✅
+The advisor recommended **fp8** at 1024² on the 48 GB A6000 (bf16 headroom is tight, as
+DESIGN §9 predicts), and the loop ran the advisor's recommended precision end-to-end:
+
+- **Generate** (`Qwen/Qwen-Image`, fp8, 30 steps, 1024²): quantize ~16 min (one-time, kernel
+  build + 20B params), **inference 92.5 s**, output saved via the real job flow
+  (`job_service`→`pipeline_service`→`asset_store`) with a DB `Job`+`JobOutput` and a PNG
+  metadata sidecar.
+- **Edit** (`Qwen/Qwen-Image-Edit-2511`, fp8, 30 steps): the **generated image was fed back
+  in** as the ordered input; **inference 194 s** (~6.2 s/step); output saved. The edit
+  metadata records `input_hashes: ["f5120501…"]` — the sha256 of the generated apple,
+  proving the chained loop.
+- Total wall-clock ~82 min (dominated by model download + the slow H: disk load + the
+  emulated-fp8 quantization passes). `SMOKE OK`.
+
+### Output evidence (committed under `images/`)
+![Generate output: a red apple on a white studio background (Qwen-Image, fp8, 1024², seed 12345)](images/generate_20260607_204612.png)
+*Generate — "a single ripe red apple on a plain white studio table…" (fp8, 30 steps, seed 12345).*
+
+![Edit output: the same apple recomposited onto a warm wooden surface in morning light (Qwen-Image-Edit-2511, fp8)](images/edit_20260607_213927.png)
+*Edit — the generated apple placed "on a rustic wooden cutting board in a cozy kitchen, warm
+morning light" (fp8, 30 steps, seed 777; input = the generate output).*
+
+Reproducibility sidecars (`generate_*.json`, `edit_*.json`, `smoke_summary_*.json`) capture
+the full DESIGN §5.5 metadata: mode, model id/revision, precision, device (incl. SM 8.6),
+both prompts, negative, seed, LoRAs, resolution, sampler, input hashes, rewriter, format.
+
+### Precision exercise (RUN §5)
+- **fp8** — fully validated (the run above); emulated on SM 8.6 (no speedup), runs correctly.
+- **bf16** — loads + runs; tight at 1024² (advisor steers to fp8); the offload path is now
+  correct for headroom-limited cards/larger latents.
+- **int4 (Nunchaku)** — unavailable in this image (the PyPI `nunchaku` is a placeholder; no
+  matching SVDQuant wheel for torch 2.12/cp313/cu126). The pipeline degrades gracefully with
+  a clear error; documented in DESIGN §9.4 as the remaining step to enable int4.
+
+### Verification evidence
+- Real in-container Generate→Edit loop: **PASSED** (`SMOKE OK`, images + metadata committed).
+- Full unit suite after the fixes (ruff + ~203 tests): **exit 0** (1 gpu test skipped in the
+  no-torch dev image). pipeline-service edits regression-clean.
+
+### State / resumability
+- **Done:** all of §12 (#1–#11) plus the round-out features; the real GPU smoke loop passed.
+  Tasks #1–#7 complete.
+- **Next:** final polish/docs sync + the §9 definition-of-done check, then the closing commit.
+- **Reconcile on resume:** the CUDA **devel** image (`qwenimageedit-backend`) is the current
+  build; models are cached in `./models` (Generate + Edit, ~tens of GB) so re-runs skip the
+  download. Re-run the smoke loop via PowerShell (not Git-Bash) with
+  `python -m scripts.smoke_generate_edit --precision fp8 --steps 30`.
