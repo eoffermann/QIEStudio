@@ -293,6 +293,7 @@ class PipelineService:
         # Drop any prior pipeline first so we don't briefly hold two in VRAM.
         self._unload()
 
+        opts = options or LoadOptions()
         with phase(
             log,
             f"Loading {mode} pipeline {model_id} ({precision}) on {device} — "
@@ -304,9 +305,10 @@ class PipelineService:
                 model_revision=model_revision,
                 precision=precision,
                 device=device,
+                options=opts,
             )
 
-        self._apply_load_options(pipeline, device=device, options=options or LoadOptions())
+        self._apply_load_options(pipeline, device=device, options=opts)
 
         self._pipeline = pipeline
         self._load_key = key
@@ -320,13 +322,20 @@ class PipelineService:
         model_revision: str | None,
         precision: str,
         device: str,
+        options: LoadOptions,
     ) -> Any:
-        """Construct the diffusers pipeline for ``mode`` with the chosen precision path."""
+        """Construct the diffusers pipeline for ``mode`` with the chosen precision path.
+
+        Device placement is deferred to the caller's offload decision: when CPU offload is
+        enabled, the pipeline is left on CPU so accelerate can manage per-module movement
+        (calling ``.to(cuda)`` first would defeat offload and double the peak memory).
+        """
         import torch  # lazy: torch absent in the dev/test image
         from diffusers import QwenImageEditPlusPipeline, QwenImagePipeline
 
         dtype = getattr(torch, precision_to_dtype_name(precision))
         pipeline_cls = QwenImageEditPlusPipeline if mode == MODE_EDIT else QwenImagePipeline
+        offload = options.enable_model_cpu_offload or options.enable_sequential_cpu_offload
 
         if precision == PRECISION_INT4:
             return self._build_int4_pipeline(
@@ -335,6 +344,7 @@ class PipelineService:
                 model_revision=model_revision,
                 dtype=dtype,
                 device=device,
+                offload=offload,
             )
 
         with phase(log, f"from_pretrained({model_id}, {precision})"):
@@ -347,7 +357,9 @@ class PipelineService:
         if precision == PRECISION_FP8:
             self._quantize_fp8(pipeline)
 
-        pipeline = pipeline.to(device)
+        # Only place on the accelerator when NOT offloading (offload manages placement).
+        if not offload and device != "cpu":
+            pipeline = pipeline.to(device)
         return pipeline
 
     def _quantize_fp8(self, pipeline: Any) -> None:
@@ -374,6 +386,7 @@ class PipelineService:
         model_revision: str | None,
         dtype: Any,
         device: str,
+        offload: bool = False,
     ) -> Any:
         """Load a Nunchaku SVDQuant int4 pipeline (CUDA-only) (DESIGN §9.1).
 
@@ -412,7 +425,9 @@ class PipelineService:
                 transformer=transformer,
                 torch_dtype=dtype,
             )
-        return pipeline.to(device) if device != "cpu" else pipeline
+        if not offload and device != "cpu":
+            pipeline = pipeline.to(device)
+        return pipeline
 
     def _apply_load_options(self, pipeline: Any, *, device: str, options: LoadOptions) -> None:
         """Apply offloading / memory toggles, ignoring ones the pipeline lacks (DESIGN §9.3)."""

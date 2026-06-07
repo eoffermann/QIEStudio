@@ -705,6 +705,30 @@ recommend an option and explain the trade-off:
   v1 is single-GPU; per-GPU queues for multi-GPU are future work.
 - **Selection is recorded** in each job's reproducibility metadata.
 
+### 9.4 Delivered-v1 notes (validated on the reference A6000)
+
+The v1 build was validated on the reference hardware (NVIDIA RTX A6000, 48 GB, Ampere
+SM 8.6). Notes on how the precision paths behave as delivered:
+
+- **Stack:** Python 3.13, PyTorch 2.12 (cu126), diffusers 0.38, in the CUDA **devel** image
+  (`nvidia/cuda:12.6.3-cudnn-devel`). The devel base is required because both
+  optimum-quanto (fp8) and Nunchaku JIT-compile CUDA kernels at load time (the runtime base
+  lacks `nvcc`/headers).
+- **bf16:** highest quality/VRAM. At 1024² on 48 GB it is *tight* once the text encoder is
+  resident, so the advisor recommends **fp8** there; bf16 is best used with CPU offload or on
+  larger cards. (Offload places the model via accelerate — the pipeline no longer calls
+  `.to(cuda)` before enabling offload.)
+- **fp8_e4m3fn (scaled, optimum-quanto):** the validated default on this card. Confirmed to
+  **run end-to-end** (Generate→Edit), but it is **emulated** on SM 8.6 (native fp8 needs
+  SM ≥ 8.9), so there is no speedup and the one-time quantization pass is slow (~13–16 min
+  per model). ~37 GB resident at 1024² — comfortable on 48 GB without offload.
+- **SVDQuant int4 (Nunchaku):** the PyPI package name `nunchaku` is an unrelated placeholder;
+  the real SVDQuant runtime ships as arch/torch-specific wheels from the upstream project and
+  was **not available** for this torch 2.12/cp313/cu126 combination at build time. The
+  pipeline therefore degrades gracefully — int4 selection raises a clear, actionable error
+  rather than crashing — and the advisor still surfaces int4 on supported CUDA arches. Wiring
+  a matching Nunchaku wheel (or building it from source) is the remaining step to enable int4.
+
 ---
 
 ## 10. Functionality summary

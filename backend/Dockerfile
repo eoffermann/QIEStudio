@@ -12,8 +12,11 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build   # -> /fe/dist
 
-# --- Stage 2: CUDA runtime + Python 3.13 backend -------------------------------------------
-FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04 AS backend
+# --- Stage 2: CUDA devel + Python 3.13 backend ---------------------------------------------
+# `devel` (not `runtime`): optimum-quanto's fp8 path and Nunchaku JIT-compile CUDA kernels at
+# load time, which needs nvcc + CUDA headers. The devel base ships them so fp8 works on this
+# Ampere card (emulated, no native fp8 < SM 8.9, but functional) — DESIGN §9.1.
+FROM nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04 AS backend
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -21,7 +24,9 @@ ENV PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
     HF_HOME=/models \
     QIE_FRONTEND_DIST=/app/frontend_dist \
-    PATH=/opt/venv/bin:$PATH
+    CUDA_HOME=/usr/local/cuda \
+    TORCH_CUDA_ARCH_LIST=8.6 \
+    PATH=/opt/venv/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Python 3.13 (deadsnakes) + minimal build/runtime deps.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -29,7 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && add-apt-repository -y ppa:deadsnakes/ppa \
     && apt-get update && apt-get install -y --no-install-recommends \
         python3.13 python3.13-venv python3.13-dev \
-        libgl1 libglib2.0-0 \
+        libgl1 libglib2.0-0 ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
 # Isolated virtualenv on Python 3.13.

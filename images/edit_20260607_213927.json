@@ -1,0 +1,28 @@
+{
+  "app": "QIE Studio",
+  "mode": "edit",
+  "seed": 777,
+  "loras": [],
+  "device": "cuda:0 (NVIDIA RTX A6000, SM 8.6)",
+  "prompt": "place the apple on a rustic wooden cutting board in a cozy kitchen, warm morning light",
+  "sampler": {
+    "guidance_scale": 1.0,
+    "true_cfg_scale": 4.0,
+    "num_inference_steps": 30
+  },
+  "model_id": "Qwen/Qwen-Image-Edit-2511",
+  "precision": "fp8",
+  "resolution": {
+    "width": 1024,
+    "height": 1024
+  },
+  "input_hashes": [
+    "f5120501bd7f2c18d660dc04f358d10e0e3b2ad4450c381560081e465939531f"
+  ],
+  "output_format": "png",
+  "model_revision": null,
+  "rewriter_model": null,
+  "schema_version": 1,
+  "enhanced_prompt": null,
+  "negative_prompt": " "
+}

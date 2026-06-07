@@ -95,6 +95,8 @@ def main() -> int:
     parser.add_argument("--steps", type=int, default=20)
     parser.add_argument("--size", type=int, default=1024)
     parser.add_argument("--out", default=os.environ.get("QIE_SMOKE_OUT", "/out"))
+    parser.add_argument("--offload", action="store_true",
+                        help="enable model CPU offload for VRAM headroom (DESIGN §9.3)")
     args = parser.parse_args()
 
     configure_logging("INFO")
@@ -128,6 +130,7 @@ def main() -> int:
             seed=12345,
             resolution=ResolutionSpec(base=args.size, orientation="square", aspect="1:1"),
             preview_every_n_steps=0,
+            enable_model_cpu_offload=args.offload,
         )
         gen_job_id = _run_job_blocking(gen_submit, label="generate")
     summary["generate"] = _export_output(gen_job_id, out_dir, "generate", storage)
@@ -152,6 +155,7 @@ def main() -> int:
             seed=777,
             resolution=ResolutionSpec(base="match"),
             preview_every_n_steps=0,
+            enable_model_cpu_offload=args.offload,
         )
         edit_job_id = _run_job_blocking(edit_submit, label="edit")
     summary["edit"] = _export_output(edit_job_id, out_dir, "edit", storage)

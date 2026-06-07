@@ -91,5 +91,58 @@ The product is organized around four reusable building blocks that combine at ru
 
 ## Commands
 
-None yet — nothing is scaffolded. Populate this section (install, run dev backend/frontend,
-Alembic migrations, lint, test, run a single test, Docker/Compose) as the tooling is added.
+Repo layout: `backend/` (FastAPI app + `pyproject.toml`, package `app`), `frontend/` (Vite
+SPA), `docker-compose.yml` at root. Two images: **`backend/Dockerfile`** (CUDA, full
+inference) and **`backend/Dockerfile.dev`** (lightweight `python:3.13-slim`, no torch — fast
+unit loop). Postgres always runs in Docker (`db` service).
+
+### Run the full app (CUDA)
+```bash
+cp .env.example .env          # set QIE_SECRET_KEY
+docker compose --profile full up --build      # UI+API at http://localhost:8000 (/docs)
+```
+
+### Dev / tests (fast, no CUDA download)
+```bash
+docker compose up -d db                                   # Postgres only
+docker compose --profile test run --rm backend-dev pytest                 # full unit suite
+docker compose --profile test run --rm backend-dev pytest tests/test_resolution.py   # one file
+docker compose --profile test run --rm backend-dev pytest tests/test_job_service.py::test_cancel_queued_job   # one test
+docker compose --profile test run --rm backend-dev ruff check .           # lint
+docker compose --profile test run --rm backend-dev mypy                   # type-check
+```
+DB-backed tests use the `session` fixture (skip if no Postgres). GPU tests are marked
+`@pytest.mark.gpu` and skip without CUDA — run them in the CUDA image (below). The dev image
+has no torch, so `pipeline_service`/`rewriter` import lazily and their pure logic is tested
+without it.
+
+### Migrations (Alembic; also auto-run on app startup)
+```bash
+# autogenerate against a DB at head, then apply:
+docker compose --profile test run --rm backend-dev alembic revision --autogenerate -m "msg"
+docker compose --profile test run --rm backend-dev alembic upgrade head
+```
+
+### Real GPU smoke test (CUDA image, on the accelerator)
+```bash
+docker build -f backend/Dockerfile -t qwenimageedit-backend .
+# self-contained Generate->Edit loop (downloads real Qwen weights to ./models; writes to ./images):
+docker run --rm --gpus all --network qwenimageedit_default \
+  -e QIE_DATABASE_URL=postgresql+psycopg://qie:qie@db:5432/qie \
+  -e HF_HOME=/models -v $PWD/models:/models -v $PWD/data:/data -v $PWD/images:/out \
+  qwenimageedit-backend python -m scripts.smoke_generate_edit --precision bf16 --steps 30 --offload
+# or the pytest GPU suite:
+docker run --rm --gpus all --network qwenimageedit_default \
+  -e QIE_DATABASE_URL=postgresql+psycopg://qie:qie@db:5432/qie \
+  -e HF_HOME=/models -v $PWD/models:/models qwenimageedit-backend pytest -m gpu
+```
+
+### Frontend (host, Node 24)
+```bash
+cd frontend && npm install && npm run build      # -> frontend/dist (served by backend)
+cd frontend && npm run dev                        # Vite dev server (proxies /api + /ws to :8000)
+```
+
+### Apple Silicon (MPS)
+Run the backend natively (Python 3.13 venv, MPS) — GPU isn't reachable inside Docker on
+macOS — and keep only `db` in Docker (DESIGN §8).
