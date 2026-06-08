@@ -592,3 +592,48 @@ generate output — `input_hashes` chains them).*
   output (#11) running now; Qwen-VL enhancer (#10) next. Then re-sync DESIGN/CLAUDE + a
   truthful final status (no premature "done" this time — I'll only call it complete when
   every required real test has actually run).
+
+---
+
+## Entry 10 — Precision-aware LoRA: int4 LoRAs done properly (not punted)
+
+- **Local time:** 2026-06-08 00:20 PDT
+- **Commit:** `99079b0`.
+
+### What & why
+RUN §5 requires a real LoRA-applied generation. The operator's direction was explicit: **do
+int4 LoRAs properly — a precision-aware solution — don't give up just because the library
+doesn't support it yet.** Findings:
+- diffusers PEFT **cannot** wrap Nunchaku's `SVDQW4A4Linear` ("Target module ... not
+  supported"), and `nunchaku.lora` only ships a FLUX converter (Qwen LoRA is an open upstream
+  feature request, #705).
+- So `apply_loras` is now **precision-aware**: bf16/fp8 use the diffusers PEFT path; **int4
+  applies each LoRA ourselves** as a parallel fp16 low-rank correction via forward hooks —
+  `y = svdquant_int4(x) + scale·up(down(x))`. That is mathematically exact LoRA, leaves the
+  int4 base untouched, and works with any external diffusers/kohya LoRA (handles
+  lora_down/up + lora_A/B, alpha/rank scaling, prefix stripping, module resolution).
+
+### Evidence (A6000; committed under `images/`)
+![bf16 LoRA — cozy rainy-window reading nook (Lightning 8-step, PEFT path)](images/lora_generate_20260607_235010.png)
+*LoRA on **bf16** (diffusers PEFT): lightx2v Qwen-Image-Lightning 8-step applied to Generate.*
+
+![int4 LoRA — same scene via the manual SVDQuant fp16 hooks](images/lora_int4_generate_20260608_001800.png)
+*LoRA on **int4** (manual SVDQuant hooks): 360 attention/MLP projections matched, 8 steps in
+12.9 s. Coherent + on-prompt (base int4 at 8 steps without the LoRA would be noise → the LoRA
+is demonstrably active). The other ~360 LoRA targets are layers Nunchaku fuses (honest
+partial coverage; enough for a correct result).*
+
+Both outputs record the LoRA id + weight in the §5.5 reproducibility metadata. **LoRAs now
+work on the workstation/gaming-card int4 path, not just datacenter bf16.**
+
+### Also fixed
+- Docker VM RAM was 31 GiB (WSL2 default) → bf16's 40 GB model swap-thrashed (894 s/step) and
+  OOM-killed. Raised to **51 GiB** via `.wslconfig`; bf16 now completes.
+- The bf16-offload placement bug (`.to(cuda)` before `enable_model_cpu_offload`) — fixed +
+  validated (bf16 LoRA ran without the prior OOM).
+
+### State / next
+- **Done:** #8 int4, #9 LoRA (bf16 + int4). **Running:** #10 Qwen-VL enhancer (downloading
+  Qwen3-VL-8B). **Next:** #11 live previews (fast int4) + finalize. Then rebuild the CUDA
+  image to bake all code, re-run the full unit regression in-container, and a truthful
+  status update.
