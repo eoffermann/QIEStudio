@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -32,7 +33,10 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     log_level: str = "INFO"
-    cors_origins: list[str] = Field(default_factory=lambda: ["*"])
+    # NoDecode: don't let pydantic-settings JSON-decode this from the env — the validator
+    # below accepts a CSV string (e.g. "*" or "a,b") *or* a JSON list, so a plain
+    # QIE_CORS_ORIGINS=* in .env doesn't crash startup.
+    cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["*"])
 
     # --- Persistence ---
     # psycopg v3 sync driver. Compose wires this to the `db` service.
@@ -85,10 +89,15 @@ class Settings(BaseSettings):
 
     @field_validator("cors_origins", mode="before")
     @classmethod
-    def _split_csv(cls, v: object) -> object:
-        """Allow a comma-separated string for CORS origins from a single env var."""
-        if isinstance(v, str) and not v.startswith("["):
-            return [o.strip() for o in v.split(",") if o.strip()]
+    def _parse_cors(cls, v: object) -> object:
+        """Accept a CSV string ("*", "a,b") or a JSON list for CORS origins from one env var."""
+        if isinstance(v, str):
+            s = v.strip()
+            if s.startswith("["):
+                import json
+
+                return json.loads(s)
+            return [o.strip() for o in s.split(",") if o.strip()]
         return v
 
     @property

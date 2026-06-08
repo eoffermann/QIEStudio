@@ -86,3 +86,15 @@ def test_inprocess_queue_runs_and_cancels() -> None:
     q.request_cancel("j2")
     assert q.is_canceled("j2")
     q.shutdown()
+
+
+def test_settings_cors_origins_parses_csv_star_and_json(monkeypatch) -> None:  # noqa: ANN001
+    """Regression: QIE_CORS_ORIGINS=* (or CSV) from .env must not crash startup (NoDecode)."""
+    from app.config import Settings
+
+    monkeypatch.setenv("QIE_CORS_ORIGINS", "*")
+    assert Settings(_env_file=None).cors_origins == ["*"]
+    monkeypatch.setenv("QIE_CORS_ORIGINS", "http://a.com,http://b.com")
+    assert Settings(_env_file=None).cors_origins == ["http://a.com", "http://b.com"]
+    monkeypatch.setenv("QIE_CORS_ORIGINS", '["x", "y"]')
+    assert Settings(_env_file=None).cors_origins == ["x", "y"]
