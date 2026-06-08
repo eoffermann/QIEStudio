@@ -104,7 +104,11 @@ def resolve(
         return snap16(src_w), snap16(src_h)
 
     if isinstance(base, str):
-        raise ValueError(f"Unknown base size: {base!r}")
+        # Accept a numeric string (clients often send select values as strings, e.g. "1024");
+        # only non-numeric, non-"match" strings are invalid.
+        if not base.strip().isdigit():
+            raise ValueError(f"Unknown base size: {base!r}")
+        base = int(base)
 
     long_edge = int(base)
     if long_edge <= 0:

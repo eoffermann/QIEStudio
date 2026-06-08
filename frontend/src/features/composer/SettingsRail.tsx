@@ -37,15 +37,19 @@ export function SettingsRail() {
   const batch = useComposer((s) => s.batch);
   const setBatch = useComposer((s) => s.setBatch);
 
-  const modeModels = useMemo(() => (models ? models[mode] : []), [models, mode]);
+  // /api/models returns { models: [{ mode, model_id, available_precisions }], ... } — filter
+  // to this mode (NOT keyed by mode, which previously crashed with undefined.length).
+  const modeModels = useMemo(
+    () => (models?.models ?? []).filter((m) => m.mode === mode),
+    [models, mode],
+  );
 
-  // Default the model to this mode's default when it changes.
+  // Default the model to this mode's first available when the mode changes.
   useEffect(() => {
     if (!modeModels.length) return;
-    const stillValid = modeModels.some((m) => m.id === modelId);
+    const stillValid = modeModels.some((m) => m.model_id === modelId);
     if (!stillValid) {
-      const def = modeModels.find((m) => m.is_default) ?? modeModels[0];
-      setModelId(def.id);
+      setModelId(modeModels[0].model_id);
     }
   }, [mode, modeModels, modelId, setModelId]);
 
@@ -66,9 +70,8 @@ export function SettingsRail() {
             </SelectTrigger>
             <SelectContent>
               {modeModels.map((m) => (
-                <SelectItem key={m.id} value={m.id}>
-                  {m.label}
-                  {m.is_default ? " (default)" : ""}
+                <SelectItem key={m.model_id} value={m.model_id}>
+                  {m.model_id}
                 </SelectItem>
               ))}
             </SelectContent>

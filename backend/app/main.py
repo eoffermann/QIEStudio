@@ -11,6 +11,7 @@ import importlib.util
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -125,16 +126,33 @@ def create_app() -> FastAPI:
         app.add_api_websocket_route("/ws/jobs/{job_id}", job_ws)
         log.info("Mounted WebSocket /ws/jobs/{job_id}")
 
-    # Serve the built SPA as static assets if present (DESIGN §4.2). Mounted last so it
-    # doesn't shadow /api routes.
+    # Serve the built SPA (DESIGN §4.2) with **client-side-routing fallback**: unknown paths
+    # (e.g. /compose on reload/deep-link) return index.html so React Router can handle them,
+    # instead of a 404. /api and /ws still get real JSON 404s. Mounted last so it never
+    # shadows the API routes registered above.
     dist = settings.frontend_dist
     if dist.exists() and dist.is_dir():
-        app.mount("/", StaticFiles(directory=str(dist), html=True), name="spa")
-        log.info("Serving SPA static assets from %s", dist)
+        app.mount("/", _SPAStaticFiles(directory=str(dist), html=True), name="spa")
+        log.info("Serving SPA (with client-routing fallback) from %s", dist)
     else:
         log.info("No SPA build at %s — API-only mode", dist)
 
     return app
+
+
+class _SPAStaticFiles(StaticFiles):
+    """StaticFiles that falls back to ``index.html`` for unknown non-API paths (SPA routing)."""
+
+    async def get_response(self, path: str, scope: Any) -> Any:
+        from starlette.exceptions import HTTPException as StarletteHTTPException
+
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            # Don't serve HTML for API/WS misses — let those be real 404s.
+            if exc.status_code == 404 and not path.startswith(("api", "ws")):
+                return await super().get_response("index.html", scope)
+            raise
 
 
 app = create_app()

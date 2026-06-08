@@ -765,3 +765,58 @@ course-corrections that followed it. From this divider onward, the diary logs **
 sessions initiated and steered by the human operator** — each one driven by a specific
 problem, question, or fix the operator raises, recorded with the same discipline (local
 time, commit id, what was investigated, what changed, and verification evidence).
+
+---
+
+## Debug 1 — Web UI: flash then black screen at `/compose`
+
+- **Local time:** 2026-06-08 03:10 PDT
+- **Commit:** (this entry's fix)
+
+### Complaint (operator, verbatim)
+> The current webui briefly flashes when I go to "http://localhost:8000/" - it redirects to
+> "http://localhost:8000/compose" and just displays a black screen. This was working just
+> fine earlier towards the end of your earlier work.
+
+### Analysis & troubleshooting
+1. **Reproduced & narrowed:** `/` → client-side redirect to `/compose` → blank. Confirmed all
+   JS/CSS assets load (200) and `main.tsx` is fine, so not a missing-bundle problem. With no
+   React **ErrorBoundary**, any render-time throw unmounts the whole tree → black (the
+   "flash" is the initial mount before the throw).
+2. **Backend logs:** no 500s/tracebacks → the crash is client-side.
+3. **Read the rendered components.** `SettingsRail` (in the composer) did
+   `const modeModels = models ? models[mode] : []` then `modeModels.length`. It expected
+   `/api/models` to be **keyed by mode** (`{generate:[…], edit:[…]}` with `{id, is_default}`
+   items). The backend actually returns `{device, models:[{mode, model_id,
+   available_precisions}], default_precision}`, so `models["generate"]` is **undefined** →
+   `undefined.length` **throws** → black screen. **Root cause: a frontend↔backend API
+   contract mismatch left by the two parallel build agents** (the frontend types were written
+   to the §7 sketch; the backend implemented different field names).
+4. **Found sibling mismatches:** `DeviceInfo` (`free_vram_bytes`/`device_name`/`supports_fp8`
+   vs the real `free_vram_mb`/`name`/`supports_fp8_native`; `compute_capability` is `[8,6]`
+   not a string); the advisor POSTed `resolution:{width,height}` while the backend wants
+   `longer_edge`; `PrecisionOption` used `verdict`/`*_bytes` vs `status`/`*_mb`. And the
+   backend had **no SPA fallback** — `GET /compose` (reload/deep-link) → 404.
+5. ("Worked earlier" was almost certainly the Vite **dev server** (base `/`, proxy) or a
+   pre-bundled view; the bundled-image SPA had never actually been click-tested until now —
+   a gap from the earlier premature "done".)
+
+### Fix
+- **Aligned the frontend to the real API** (`types.ts` + `DeviceBadge`, `ComposerPage`,
+  `SettingsRail` → `models.models.filter(m=>m.mode===mode)` + `model_id`, `PrecisionAdvisor`
+  → `longer_edge` + `status`/`est_peak_vram_mb`/`headroom_mb`; MB→GB helper).
+- **Added a React `ErrorBoundary`** (`main.tsx`) so a single mismatch shows a readable error,
+  never a black screen.
+- **Backend SPA fallback** (`_SPAStaticFiles` in `main.py`): unknown non-`/api`,`/ws` paths
+  serve `index.html` (client routing on reload/deep-link); API misses stay JSON 404.
+- **Resolution coercion:** `resolve()` now accepts a numeric **string** base (the SPA `<Select>`
+  sends `"1024"`), which had been causing a non-fatal `422` on `/api/presets/resolution/resolve`.
+- Regression tests added (CORS-style NoDecode test earlier; resolution string-base test; the
+  frontend now compiles under `tsc` strict against the real contract).
+
+### Verification
+- Frontend `npm run build` (tsc strict) green; backend unit suite green + ruff clean.
+- Rebuilt the CUDA image; **headless Playwright probe against the live app**:
+  `FINAL_URL=/compose`, rendered content (`ROOT_LEN≈1032`), `HAS_GENERATE/SETTINGS/DEVICE_BADGE
+  = true`, `GET /compose = 200`, and **`FAILS: NONE`** (no page errors, no 4xx/5xx). Black
+  screen resolved.

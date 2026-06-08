@@ -1,7 +1,6 @@
 import { Loader2, Cpu } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
-import { gb } from "@/lib/utils";
+import { cn, gbFromMb } from "@/lib/utils";
 import { useAdvice } from "@/api/hooks";
 import { useComposer } from "@/store/composer";
 import { useResolvedResolution } from "./useResolvedResolution";
@@ -9,12 +8,13 @@ import type { FitVerdict, Precision, PrecisionOption } from "@/api/types";
 
 const VERDICT: Record<
   FitVerdict,
-  { label: string; variant: "success" | "default" | "warning" | "danger" }
+  { label: string; variant: "success" | "default" | "warning" | "danger" | "muted" }
 > = {
   recommended: { label: "Recommended", variant: "success" },
   fits: { label: "Fits", variant: "default" },
   tight: { label: "Tight", variant: "warning" },
   wont_fit: { label: "Won't fit", variant: "danger" },
+  unavailable: { label: "Unavailable", variant: "muted" },
 };
 
 const PRECISION_LABEL: Record<Precision, string> = {
@@ -41,8 +41,7 @@ export function PrecisionAdvisor() {
   const advice = useAdvice(
     {
       mode,
-      model_id: modelId ?? "",
-      resolution: wh,
+      longer_edge: Math.max(wh.width, wh.height),
       batch,
       loras,
     },
@@ -62,7 +61,7 @@ export function PrecisionAdvisor() {
 
       <div className="space-y-1.5">
         {(advice.data?.options ?? FALLBACK_OPTIONS).map((opt) => {
-          const verdict = VERDICT[opt.verdict];
+          const verdict = VERDICT[opt.status] ?? VERDICT.fits;
           const active = precision === opt.precision;
           const disabled = !opt.available;
           return (
@@ -87,9 +86,9 @@ export function PrecisionAdvisor() {
               <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
                 <span>{opt.rationale}</span>
               </div>
-              {opt.peak_vram_bytes > 0 && (
+              {opt.est_peak_vram_mb > 0 && (
                 <div className="mt-1 text-[11px] text-muted-foreground">
-                  ~{gb(opt.peak_vram_bytes)} peak · {gb(opt.headroom_bytes)} headroom
+                  ~{gbFromMb(opt.est_peak_vram_mb)} peak · {gbFromMb(opt.headroom_mb)} headroom
                 </div>
               )}
             </button>
@@ -104,26 +103,29 @@ export function PrecisionAdvisor() {
 const FALLBACK_OPTIONS: PrecisionOption[] = [
   {
     precision: "bf16",
-    verdict: "fits",
-    peak_vram_bytes: 0,
-    headroom_bytes: 0,
+    status: "fits",
+    est_peak_vram_mb: 0,
+    headroom_mb: 0,
     rationale: "Highest quality, highest VRAM.",
     available: true,
+    caveats: [],
   },
   {
     precision: "fp8",
-    verdict: "fits",
-    peak_vram_bytes: 0,
-    headroom_bytes: 0,
+    status: "fits",
+    est_peak_vram_mb: 0,
+    headroom_mb: 0,
     rationale: "~half the weights, near-bf16 quality.",
     available: true,
+    caveats: [],
   },
   {
     precision: "int4",
-    verdict: "fits",
-    peak_vram_bytes: 0,
-    headroom_bytes: 0,
+    status: "fits",
+    est_peak_vram_mb: 0,
+    headroom_mb: 0,
     rationale: "Lowest VRAM (CUDA only).",
     available: true,
+    caveats: [],
   },
 ];

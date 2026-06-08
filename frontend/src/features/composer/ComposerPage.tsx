@@ -11,7 +11,7 @@ import { useComposer, effectiveSeed } from "@/store/composer";
 import { useUi } from "@/store/ui";
 import { useSubmitJob, useSubmitBatch, useDevice } from "@/api/hooks";
 import { useResolvedResolution } from "./useResolvedResolution";
-import { gb } from "@/lib/utils";
+import { gbFromMb } from "@/lib/utils";
 import { toast } from "sonner";
 import type { JobParams, JobSubmit, BatchSubmit } from "@/api/types";
 
@@ -97,7 +97,7 @@ export function ComposerPage() {
   }, [generate]);
 
   const submitting = submitJob.isPending || submitBatch.isPending;
-  const freeVram = device ? gb(device.free_vram_bytes) : "—";
+  const freeVram = device ? gbFromMb(device.free_vram_mb) : "—";
 
   return (
     <div className="flex h-full flex-col">

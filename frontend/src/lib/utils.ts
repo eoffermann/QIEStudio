@@ -20,6 +20,12 @@ export function gb(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 }
 
+/** GB string from megabytes (the backend reports VRAM/RAM in MB). */
+export function gbFromMb(mb: number | null | undefined): string {
+  if (mb == null || Number.isNaN(mb)) return "—";
+  return `${(mb / 1024).toFixed(1)} GB`;
+}
+
 /** Short relative time. */
 export function timeAgo(iso: string): string {
   const then = new Date(iso).getTime();

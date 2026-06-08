@@ -18,6 +18,13 @@ def test_spec_example_landscape_3_2() -> None:
     assert resolution.resolve(base=1024, orientation="landscape", aspect="3:2") == (1024, 688)
 
 
+def test_base_accepts_numeric_string() -> None:
+    # Regression: the SPA's <Select> sends base as a string ("1024"); resolve must accept it
+    # (previously 422'd with "Unknown base size: '1024'").
+    assert resolution.resolve(base="1024", orientation="landscape", aspect="3:2") == (1024, 688)
+    assert resolution.resolve(base="512", orientation="square", aspect="1:1") == (512, 512)
+
+
 def test_square_uses_base_for_both_sides() -> None:
     assert resolution.resolve(base=1024, orientation="square", aspect=None) == (1024, 1024)
     assert resolution.resolve(base=512, orientation="square", aspect="1:1") == (512, 512)

@@ -114,50 +114,51 @@ export type Backend = "cuda" | "rocm" | "mps" | "cpu";
 
 export interface DeviceInfo {
   backend: Backend;
-  device_name: string;
-  compute_capability: string | null;
-  total_vram_bytes: number;
-  free_vram_bytes: number;
-  total_ram_bytes: number;
-  supports_fp8: boolean;
-  supports_int4: boolean;
+  device_str: string;
+  name: string;
+  compute_capability: [number, number] | null;
+  total_vram_mb: number;
+  free_vram_mb: number;
+  total_ram_mb: number;
+  supports_bf16: boolean;
+  supports_fp8_native: boolean;
+  supports_int4_nunchaku: boolean;
 }
 
-export interface ModelVersion {
-  id: string;
-  revision: string | null;
-  label: string;
+export interface ModelEntry {
   mode: Mode;
-  is_default: boolean;
+  model_id: string;
+  available_precisions: Precision[];
 }
 
 export interface ModelCatalog {
-  generate: ModelVersion[];
-  edit: ModelVersion[];
-  precisions: Precision[];
+  device: DeviceInfo;
+  models: ModelEntry[];
+  default_precision: Precision;
 }
 
-export type FitVerdict = "recommended" | "fits" | "tight" | "wont_fit";
+export type FitVerdict = "recommended" | "fits" | "tight" | "wont_fit" | "unavailable";
 
 export interface PrecisionOption {
   precision: Precision;
-  verdict: FitVerdict;
-  peak_vram_bytes: number;
-  headroom_bytes: number;
-  rationale: string;
   available: boolean;
+  status: FitVerdict;
+  est_peak_vram_mb: number;
+  headroom_mb: number;
+  rationale: string;
+  caveats: string[];
 }
 
 export interface AdviceRequest {
   mode: Mode;
-  model_id: string;
-  resolution: { width: number; height: number };
+  longer_edge: number;
   batch: number;
   loras: { lora_id: string; weight: number }[];
 }
 
 export interface Advice {
-  recommended: Precision;
+  device: DeviceInfo;
+  recommended: Precision | null;
   options: PrecisionOption[];
 }
 
