@@ -64,6 +64,7 @@ def _serialize(job: Job, outputs: list[JobOutput]) -> JobRead:
                 id=o.id,
                 position=o.position,
                 seed=o.seed,
+                asset_id=o.asset_id,
                 file_url=f"/api/jobs/{job.id}/outputs/{o.id}/file",
                 thumb_url=f"/api/jobs/{job.id}/outputs/{o.id}/thumb" if o.thumb_key else None,
                 metadata=o.metadata_json or {},

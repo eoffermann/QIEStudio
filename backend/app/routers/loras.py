@@ -15,8 +15,10 @@ provider call fails.
 from __future__ import annotations
 
 import logging
+import mimetypes
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import StreamingResponse
 
 from app.deps import CurrentPrincipal, DbSession, Storage
 from app.schemas.loras import LoraImport, LoraRead, LoraSearchResult, LoraUpdate
@@ -33,6 +35,16 @@ def list_loras(session: DbSession, principal: CurrentPrincipal) -> list[LoraRead
     return [LoraRead.from_lora(lora) for lora in lora_manager.list_loras(
         session=session, principal=principal
     )]
+
+
+@router.get("/{lora_id}/thumb")
+def lora_thumb(lora_id: str, session: DbSession, principal: CurrentPrincipal, storage: Storage):  # noqa: ANN201
+    """Stream a LoRA's preview thumbnail (e.g. a CivitAI preview image), if it has one."""
+    lora = lora_manager.get_lora(lora_id=lora_id, session=session, principal=principal)
+    if lora is None or not lora.thumb_key or not storage.exists(lora.thumb_key):
+        raise HTTPException(status_code=404, detail="LoRA thumbnail not found")
+    media = mimetypes.guess_type(lora.thumb_key)[0] or "image/webp"
+    return StreamingResponse(storage.open_read(lora.thumb_key), media_type=media)
 
 
 @router.post("/upload", response_model=LoraRead, status_code=status.HTTP_201_CREATED)

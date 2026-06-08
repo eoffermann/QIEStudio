@@ -93,6 +93,15 @@ export function assetThumbUrl(
   return `/api/assets/${encodeURIComponent(id)}/thumb`;
 }
 
+/** Backend URL for a LoRA's preview thumbnail (GET /api/loras/{id}/thumb), if it has one. */
+export function loraThumbUrl(
+  id: string,
+  hasThumb: string | boolean | null | undefined,
+): string | undefined {
+  if (!hasThumb) return undefined;
+  return `/api/loras/${encodeURIComponent(id)}/thumb`;
+}
+
 /** Build the WebSocket URL for job progress, honoring the current origin. */
 export function jobWsUrl(jobId: string): string {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";

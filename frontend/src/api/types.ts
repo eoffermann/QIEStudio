@@ -294,6 +294,7 @@ export interface JobOutput {
   id: string;
   position: number;
   seed: number | null;
+  asset_id: string | null;
   file_url: string;
   thumb_url: string | null;
   metadata: Record<string, unknown>;

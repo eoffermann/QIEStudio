@@ -39,6 +39,7 @@ import type {
 export const assetsApi = {
   list: (q?: { scope?: string; tag?: string; q?: string; source?: string }) =>
     api<Asset[]>("/assets", { query: q }),
+  get: (id: string) => api<Asset>(`/assets/${id}`),
   upload: (files: File[]) => {
     const fd = new FormData();
     for (const f of files) fd.append("files", f);

@@ -78,6 +78,9 @@ class JobOutput(SQLModel, table=True):
     id: str = id_field()
     job_id: str = Field(index=True, foreign_key="job.id")
     position: int = 0
+    # The ephemeral Asset created for this output, so the UI can promote-to-library or
+    # send-to-input the result (DESIGN §5.5 "send output to input" / promote).
+    asset_id: str | None = Field(default=None, foreign_key="asset.id")
     storage_key: str
     thumb_key: str | None = None
     seed: int | None = None

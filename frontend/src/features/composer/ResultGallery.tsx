@@ -1,16 +1,46 @@
 import { useState } from "react";
-import { Download, ArrowRightToLine, RotateCcw, SplitSquareHorizontal } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Download, ArrowRightToLine, RotateCcw, SplitSquareHorizontal, Library } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useUi } from "@/store/ui";
+import { useComposer, newUid } from "@/store/composer";
+import { assetsApi } from "@/api/endpoints";
 import { applyJobSettings } from "@/lib/jobSettings";
 import { CompareSlider } from "./CompareSlider";
 import { toast } from "sonner";
-import type { Job } from "@/api/types";
+import type { Job, JobOutput } from "@/api/types";
 
 export function ResultGallery({ job }: { job: Job }) {
   const [compare, setCompare] = useState(false);
   const setActiveJob = useUi((s) => s.setActiveJob);
+  const addInputs = useComposer((s) => s.addInputs);
+  const navigate = useNavigate();
+
+  // Load the output's asset (by id) and add it to the Edit composer inputs.
+  const sendToInput = async (out: JobOutput) => {
+    if (!out.asset_id) return;
+    try {
+      const asset = await assetsApi.get(out.asset_id);
+      useComposer.getState().setMode("edit");
+      addInputs([{ uid: newUid(), asset, origin: "library" }]);
+      setActiveJob(null);
+      navigate("/compose");
+      toast.success("Sent to input");
+    } catch (e) {
+      toast.error(`Send to input failed: ${(e as Error).message}`);
+    }
+  };
+
+  const promote = async (out: JobOutput) => {
+    if (!out.asset_id) return;
+    try {
+      await assetsApi.promote(out.asset_id);
+      toast.success("Promoted to library");
+    } catch (e) {
+      toast.error(`Promote failed: ${(e as Error).message}`);
+    }
+  };
 
   // The "before" image (Edit mode source) is not exposed in the job read model;
   // compare falls back to a grid until a source URL is available.
@@ -67,13 +97,21 @@ export function ResultGallery({ job }: { job: Job }) {
                   size="icon"
                   variant="secondary"
                   className="h-7 w-7"
-                  title="Send to input"
-                  onClick={() => {
-                    setActiveJob(null);
-                    toast.info("Open the output from the library to reuse as input");
-                  }}
+                  title="Send to input (Edit mode)"
+                  disabled={!out.asset_id}
+                  onClick={() => void sendToInput(out)}
                 >
                   <ArrowRightToLine className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="secondary"
+                  className="h-7 w-7"
+                  title="Promote to library"
+                  disabled={!out.asset_id}
+                  onClick={() => void promote(out)}
+                >
+                  <Library className="h-3.5 w-3.5" />
                 </Button>
                 {out.seed != null && (
                   <span className="ml-auto rounded bg-black/60 px-1.5 py-0.5 font-mono text-[10px] text-white">

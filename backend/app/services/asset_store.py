@@ -260,6 +260,7 @@ def save_output_image(
     output = JobOutput(
         job_id=job_id,
         position=position,
+        asset_id=asset.id,
         storage_key=key,
         thumb_key=thumb_key,
         seed=seed,

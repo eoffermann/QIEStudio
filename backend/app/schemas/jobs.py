@@ -82,6 +82,7 @@ class JobOutputRead(BaseModel):
     id: str
     position: int
     seed: int | None
+    asset_id: str | None
     file_url: str
     thumb_url: str | None
     metadata: dict[str, Any]

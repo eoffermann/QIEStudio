@@ -87,6 +87,19 @@ def list_assets(
     return [AssetRead.from_asset(a) for a in assets]
 
 
+@router.get("/{asset_id}", response_model=AssetRead)
+def get_asset_detail(
+    asset_id: str,
+    session: DbSession,
+    principal: CurrentPrincipal,
+) -> AssetRead:
+    """Fetch a single asset by id (used for send-output-to-input / reuse) (DESIGN §5.5)."""
+    asset = asset_store.get_asset(asset_id=asset_id, session=session)
+    if asset is None or asset.owner_id != principal.owner_id:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    return AssetRead.from_asset(asset)
+
+
 @router.get("/{asset_id}/file")
 def get_asset_file(
     asset_id: str,

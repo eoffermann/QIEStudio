@@ -883,3 +883,40 @@ or reads a response field. Key mismatches found + fixed:
    aren't dereferenceable; thumbnail rendering dropped until a route exists.
 3. The `status:"done"` WS message intentionally omits output URLs → the UI does one extra
    `GET /api/jobs/{id}` to render results (correct, just noted).
+
+---
+
+## Debug 3 — Fix the deferred backend feature gaps (no deferral policy)
+
+- **Local time:** 2026-06-08 04:10 PDT
+- **Commit:** (this entry's fix)
+
+### Context
+Operator standing instruction: **any issue affecting an intended feature gets fixed, never
+deferred — no approval needed.** Debug 2 had flagged three backend gaps "for review"; two were
+real feature breakages, so I fixed them now (the third — the WS-done refetch — is correct
+behavior, not a bug).
+
+### Bug A — outputs can't be promoted to library / sent to input (§5.5)
+`JobOutputRead` exposed no `asset_id`, so the result gallery's "promote to library" and "send
+output to input" had nothing to reference (the saved output *is* an ephemeral `Asset`).
+- Added `asset_id` to the `JobOutput` model (+ Alembic migration `fe1a4a02`, FK → asset.id),
+  set it in `asset_store.save_output_image`, and exposed it in `JobOutputRead` + the jobs
+  serializer.
+- Added the missing **`GET /api/assets/{id}`** (single-asset fetch — the assets router only
+  had list/file/thumb/patch/delete) so the UI can load an output as an Edit input.
+- Frontend `ResultGallery`: restored a working **Send-to-input** (fetches the asset, switches
+  to Edit mode, adds it to inputs) and a **Promote-to-library** button, both keyed on
+  `out.asset_id`.
+
+### Bug B — LoRA thumbnails not dereferenceable (§5.3)
+`LoraRead.thumb_key` had no streaming route. Added **`GET /api/loras/{id}/thumb`** (media type
+inferred from the key) and re-enabled LoRA preview thumbnails in `LorasPage` (falls back to the
+icon when a LoRA has no preview).
+
+### Verification
+- Backend ruff + full unit suite green; migration `fe1a4a02` **auto-applied on startup**
+  (confirmed `job_output.asset_id` column + FK on the live DB). New endpoints respond
+  (`GET /api/assets/<bad>` → 404, `GET /api/loras/<bad>/thumb` → 404).
+- Frontend `tsc` strict green; headless multi-page probe of the live app — all 6 routes render
+  with content, **0 page errors, 0 HTTP ≥400**.
