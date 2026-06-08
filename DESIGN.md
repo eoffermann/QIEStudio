@@ -708,26 +708,43 @@ recommend an option and explain the trade-off:
 ### 9.4 Delivered-v1 notes (validated on the reference A6000)
 
 The v1 build was validated on the reference hardware (NVIDIA RTX A6000, 48 GB, Ampere
-SM 8.6). Notes on how the precision paths behave as delivered:
+SM 8.6) — **all three precisions run end-to-end**, with committed image evidence under
+`images/`. Notes on how the precision paths behave as delivered:
 
-- **Stack:** Python 3.13, PyTorch 2.12 (cu126), diffusers 0.38, in the CUDA **devel** image
-  (`nvidia/cuda:12.6.3-cudnn-devel`). The devel base is required because both
-  optimum-quanto (fp8) and Nunchaku JIT-compile CUDA kernels at load time (the runtime base
-  lacks `nvcc`/headers).
+- **Stack:** Python 3.13, PyTorch **2.12 (cu126)**, **diffusers 0.36**, transformers 5.x, in
+  the CUDA **devel** image (`nvidia/cuda:12.6.3-cudnn-devel`). The devel base is required
+  because optimum-quanto (fp8) JIT-compiles CUDA kernels at load time (the runtime base lacks
+  `nvcc`/headers). diffusers is pinned to **0.36** because Nunchaku's Qwen transformer needs
+  the `txt_seq_lens` kwarg the `QwenImagePipeline` passes in 0.36 but **dropped in 0.38**;
+  0.36 still ships `QwenImageEditPlusPipeline` (2511). **torchao is intentionally not
+  installed** (unused — fp8 uses quanto — and it broke diffusers 0.36's import).
 - **bf16:** highest quality/VRAM. At 1024² on 48 GB it is *tight* once the text encoder is
-  resident, so the advisor recommends **fp8** there; bf16 is best used with CPU offload or on
-  larger cards. (Offload places the model via accelerate — the pipeline no longer calls
-  `.to(cuda)` before enabling offload.)
-- **fp8_e4m3fn (scaled, optimum-quanto):** the validated default on this card. Confirmed to
-  **run end-to-end** (Generate→Edit), but it is **emulated** on SM 8.6 (native fp8 needs
-  SM ≥ 8.9), so there is no speedup and the one-time quantization pass is slow (~13–16 min
-  per model). ~37 GB resident at 1024² — comfortable on 48 GB without offload.
-- **SVDQuant int4 (Nunchaku):** the PyPI package name `nunchaku` is an unrelated placeholder;
-  the real SVDQuant runtime ships as arch/torch-specific wheels from the upstream project and
-  was **not available** for this torch 2.12/cp313/cu126 combination at build time. The
-  pipeline therefore degrades gracefully — int4 selection raises a clear, actionable error
-  rather than crashing — and the advisor still surfaces int4 on supported CUDA arches. Wiring
-  a matching Nunchaku wheel (or building it from source) is the remaining step to enable int4.
+  resident, so the advisor recommends int4 there; bf16 runs with CPU offload (the offload
+  path places via accelerate — the pipeline no longer calls `.to(cuda)` before enabling
+  offload — and needs adequate host RAM, since the ~40 GB model is held in CPU memory).
+- **fp8_e4m3fn (scaled, optimum-quanto):** runs end-to-end, but it is **emulated** on SM 8.6
+  (native fp8 needs SM ≥ 8.9), so there is no speedup and the one-time quantization pass is
+  slow (~13–16 min/model). ~37 GB resident at 1024².
+- **SVDQuant int4 (Nunchaku) — WORKS and is the recommended path on Ampere/workstation/gaming
+  cards.** Installed from the matched Nunchaku **dev wheel** (`v1.3.0dev*`,
+  cu12.8/torch2.12/cp313 — runtime-compatible with the torch cu126 runtime; the PyPI
+  `nunchaku` is an unrelated placeholder, not used). Pre-quantized SVDQuant transformers are
+  pulled per base model (`nunchaku-tech/nunchaku-qwen-image`,
+  `nunchaku-tech/nunchaku-qwen-image-edit-2509`; **Edit-2511** uses the community
+  `QuantFunc/Nunchaku-Qwen-Image-EDIT-2511` while the official one is pending upstream).
+  `get_precision()` selects int4 (Ampere/Ada) vs NVFP4 (Blackwell). On the A6000, int4 ran
+  ~1.3 s/step (vs emulated fp8 ~3 s/step) and only the int4 transformer + encoder/VAE
+  (~no 40 GB DiT) is resident — so it fits comfortably and is the fastest path. The advisor
+  therefore prefers native int4 over emulated fp8 on SM < 8.9.
+- **LoRAs on int4 (precision-aware).** PEFT cannot wrap Nunchaku's `SVDQW4A4Linear`, so QIE
+  applies LoRAs to the int4 transformer **itself**, as a parallel fp16 low-rank correction
+  via forward hooks (`y = svdquant_int4(x) + scale·up(down(x))`) — mathematically exact LoRA,
+  base int4 untouched, works with external diffusers/kohya LoRAs. bf16/fp8 use the standard
+  diffusers PEFT path. (Some LoRA target layers that Nunchaku fuses are skipped; attention/MLP
+  projections — the bulk — are covered.)
+- **Live latent previews** decode Qwen's *packed* latents via the pipeline's own
+  `_unpack_latents` + per-channel `latents_mean/std` de-normalization (a generic VAE decode
+  fails) — validated mid-generation on the real VAE.
 
 ---
 

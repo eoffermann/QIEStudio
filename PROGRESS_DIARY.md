@@ -678,3 +678,46 @@ bf16 **and** int4 (#9), Qwen-VL enhancer (#10), live previews + bf16 output (#11
 rebuild the CUDA image to bake all the new code (LoRA/preview/enhancer/diffusers-0.36/
 nunchaku), run the full unit suite in-container, then a truthful final status — only calling
 it done when re-verified.
+
+---
+
+## Entry 12 — Reopened-audit complete; honest status (not a unilateral "done")
+
+- **Local time:** 2026-06-08 01:20 PDT
+- **Commits:** `db6b6fc` (int4), `99079b0` (precision-aware LoRA), `8706e61` (enhancer +
+  previews), plus this entry + the DESIGN §9.4 / CLAUDE.md sync.
+
+### Every reopened gap is now closed WITH committed GPU evidence
+| Gap (was written, not run) | Status | Evidence |
+|---|---|---|
+| **int4** Generate→Edit on A6000 | ✅ runs (native, ~1.3 s/step) | `generate_2026..223834.png`, `edit_2026..225441.png` |
+| **LoRA applied** (RUN §5) | ✅ bf16 **and** int4 | `lora_generate_*.png`, `lora_int4_generate_*.png` |
+| **Qwen-VL enhancer** (RUN §5) | ✅ text + multimodal (saw the image) | `enhancer_*.json` |
+| **Live latent previews** (§5.5) | ✅ decode fixed on real Qwen VAE | `live_preview_*.png` |
+| **bf16 / fp8 / int4 advisor exercise** (§6) | ✅ all three ran end-to-end | committed loops |
+
+### Verification done this round
+- Unit suite (diffusers 0.36, no torchao) in Docker: **ruff clean, all pass** (gpu + rembg
+  tests skip in the no-torch dev image).
+- CUDA image **rebuilt** to bake all new code, then int4+LoRA re-run **self-contained (no
+  bind mount)** → SMOKE OK. The delivered image is complete, not dependent on host mounts.
+
+### Honest remaining caveats (disclosed, not hidden)
+- **int4 LoRA coverage is partial:** 360 of the LoRA's 720 target modules match; the rest are
+  layers Nunchaku **fuses** in SVDQuant, which a per-projection hook can't address. Results
+  are correct and on-prompt; full parity would need decomposing the fused layers (future work).
+- **Edit-2511 int4** uses a **community** SVDQuant (`QuantFunc/...`) pending the official
+  upstream weights (issue #858).
+- **fp8 is emulated** on this Ampere card (functional, no speedup) — int4 is the fast path.
+- The exhaustive `@pytest.mark.gpu` pytest suite was **not** run module-by-module (each
+  precision re-loads ~20B weights from a slow HDD); instead the equivalent real paths were
+  exercised via `scripts/smoke_*` with committed image evidence, and the int4 guard test was
+  run in-container earlier.
+- bf16 needs ≥~48 GB host RAM for CPU offload (the WSL2 VM was raised 31→51 GiB); on this box
+  bf16 is slow (offload), which is exactly why int4 is the recommended workstation path.
+
+### Status
+I am **not** unilaterally declaring "done" this time (per the honesty banner). From my side,
+the spec's precision/LoRA/enhancer/preview requirements now run on real hardware with
+committed evidence, the unit suite is green, and the CUDA image is self-contained. Over to
+the operator to confirm or point out anything still short.

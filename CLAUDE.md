@@ -14,9 +14,13 @@ Qwen-VL prompt enhancer (§5.8) and the round-out features (background removal, 
 recipes, catalog export); a React/Vite SPA (`frontend/`); and the CUDA + dev Docker images.
 
 The full unit suite (~200 tests) is green in Docker against Postgres, and the **real
-Generate→Edit smoke loop has run end-to-end on the reference A6000** (fp8; output evidence +
-reproducibility sidecars committed under `images/`). See DESIGN §9.4 for delivered precision
-notes (fp8 is emulated on SM 8.6; int4/Nunchaku is the remaining enablement step).
+Generate→Edit loop has run end-to-end on the reference A6000 across all three precisions**
+(bf16, fp8, and **Nunchaku SVDQuant int4** — the recommended path on Ampere/workstation/gaming
+cards), plus a **LoRA-applied** generation (on bf16 *and* int4 via a precision-aware path), the
+**Qwen-VL prompt enhancer** (multimodal), and **live latent previews** — all with output
+evidence + reproducibility sidecars committed under `images/`. See DESIGN §9.4 for delivered
+precision notes (fp8 is emulated on SM 8.6; int4 is native + fastest; int4 LoRAs use a
+manual fp16 hook since PEFT can't wrap SVDQuant layers).
 
 **`DESIGN.md` remains the source of truth** — keep it (and this file) in sync when scope or
 decisions change.
