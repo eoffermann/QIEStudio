@@ -13,6 +13,7 @@ single :func:`_get` seam) so unit tests monkeypatch it and never touch the netwo
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
 
 import httpx
@@ -125,7 +126,40 @@ def set_key(
     session.commit()
     session.refresh(integration)
     log.info("Stored %s credential (status=%s)", provider, integration.status)
+    # Make a HuggingFace token usable by every download path immediately (no restart).
+    if provider == "huggingface":
+        apply_hf_token_to_env(session=session, principal=principal)
     return integration
+
+
+# Env vars huggingface_hub / transformers / diffusers read for the auth token. Setting both
+# covers the current (`HF_TOKEN`) and legacy (`HUGGING_FACE_HUB_TOKEN`) names.
+_HF_TOKEN_ENV_VARS = ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")
+
+
+def apply_hf_token_to_env(*, session: Session, principal: Principal) -> bool:
+    """Sync the stored HuggingFace token into the process environment.
+
+    All weight downloads — the image pipelines, the Qwen-VL rewriter, the Nunchaku int4
+    sources, and HF LoRA imports — ultimately call ``from_pretrained`` / ``hf_hub_download``,
+    which read the token from ``HF_TOKEN`` (via ``huggingface_hub.get_token()``). Without
+    this, the stored credential was only used by the explicit LoRA-import path, so every
+    other download ran anonymously and the console logged "accessing HuggingFace without a
+    token" (and was subject to anonymous rate limits / gated-repo denials).
+
+    Sets both env vars when a token is present, clears them otherwise (so a deleted token
+    stops authenticating). v1 is single-user, so this is called for the implicit owner.
+    Returns ``True`` if a token was applied, ``False`` if cleared/absent.
+    """
+    token = get_key_plaintext(provider="huggingface", session=session, principal=principal)
+    if token:
+        for var in _HF_TOKEN_ENV_VARS:
+            os.environ[var] = token
+        log.info("Applied stored HuggingFace token to environment for weight downloads")
+        return True
+    for var in _HF_TOKEN_ENV_VARS:
+        os.environ.pop(var, None)
+    return False
 
 
 def get_key_plaintext(
@@ -198,6 +232,9 @@ def delete_integration(*, provider: str, session: Session, principal: Principal)
     session.delete(integration)
     session.commit()
     log.info("Deleted %s credential", provider)
+    # Stop authenticating downloads once the HF token is gone.
+    if provider == "huggingface":
+        apply_hf_token_to_env(session=session, principal=principal)
     return True
 
 
@@ -205,6 +242,7 @@ def delete_integration(*, provider: str, session: Session, principal: Principal)
 __all__ = [
     "SUPPORTED_PROVIDERS",
     "UnknownProviderError",
+    "apply_hf_token_to_env",
     "decrypt_secret",
     "delete_integration",
     "get_key_plaintext",

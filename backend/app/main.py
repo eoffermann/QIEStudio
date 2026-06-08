@@ -46,6 +46,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception:  # noqa: BLE001
             log.exception("Migrations failed at startup (continuing; check DB connectivity)")
 
+    # Load any stored HuggingFace token into the environment so every weight download
+    # (pipelines, rewriter, Nunchaku int4 sources, LoRA imports) authenticates instead of
+    # running anonymously. Safe to skip if the table/DB isn't ready.
+    try:
+        from sqlmodel import Session
+
+        from app.db import get_engine
+        from app.interfaces.auth import Principal
+        from app.services import integrations
+
+        with Session(get_engine()) as session:
+            applied = integrations.apply_hf_token_to_env(
+                session=session, principal=Principal()
+            )
+        log.info("HuggingFace token %s at startup", "applied" if applied else "not configured")
+    except Exception:  # noqa: BLE001 — never let token loading abort startup
+        log.exception("Could not load HuggingFace token at startup (continuing)")
+
     with phase(log, "Starting in-process job queue worker"):
         get_job_queue()
 

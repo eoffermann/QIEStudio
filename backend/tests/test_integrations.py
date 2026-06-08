@@ -114,6 +114,44 @@ def test_delete_integration(session, principal, stub_valid) -> None:
     ) is False
 
 
+@pytest.fixture
+def clean_hf_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # monkeypatch restores os.environ after the test, so direct writes by the code under
+    # test are rolled back too.
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("HUGGING_FACE_HUB_TOKEN", raising=False)
+
+
+def test_set_hf_key_applies_token_to_env(session, principal, stub_valid, clean_hf_env) -> None:
+    import os
+
+    integrations.set_key(
+        provider="huggingface", key="hf_secret", session=session, principal=principal
+    )
+    assert os.environ["HF_TOKEN"] == "hf_secret"
+    assert os.environ["HUGGING_FACE_HUB_TOKEN"] == "hf_secret"
+
+
+def test_delete_hf_key_clears_token_env(session, principal, stub_valid, clean_hf_env) -> None:
+    import os
+
+    integrations.set_key(
+        provider="huggingface", key="hf_secret", session=session, principal=principal
+    )
+    integrations.delete_integration(
+        provider="huggingface", session=session, principal=principal
+    )
+    assert "HF_TOKEN" not in os.environ
+    assert "HUGGING_FACE_HUB_TOKEN" not in os.environ
+
+
+def test_civitai_key_does_not_touch_hf_env(session, principal, stub_valid, clean_hf_env) -> None:
+    import os
+
+    integrations.set_key(provider="civitai", key="cv", session=session, principal=principal)
+    assert "HF_TOKEN" not in os.environ
+
+
 def test_unknown_provider_rejected(session, principal) -> None:
     with pytest.raises(integrations.UnknownProviderError):
         integrations.set_key(provider="dropbox", key="x", session=session, principal=principal)

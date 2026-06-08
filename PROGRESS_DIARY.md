@@ -1014,3 +1014,47 @@ Two distinct issues:
   tag-only term, absent from name/description) returned that asset — tag search works. Test
   asset reverted afterward.
 - Frontend `tsc` strict + `vite build` green; headless probe of `/images` renders, 0 errors.
+
+
+## Debug 6 — HuggingFace still accessed anonymously despite a stored, verified token
+
+### Complaint (operator, verbatim)
+> I'm still getting messages in the docker console that we are accessing Huggingface without a
+> token, even though our token has been entered and verified now.
+
+### Analysis
+The integration store *had* the token (encrypted, status `valid`), but only **one** download
+path actually used it. Grepping every HF entry point:
+- `lora_manager` (HF import / list / search) — **passed** `token=` from the integration store. ✅
+- `pipeline_service.from_pretrained` (image pipelines + the Nunchaku int4 transformer) — no
+  token. ❌
+- `rewriter.from_pretrained` (Qwen-VL enhancer weights) — no token. ❌
+
+`diffusers`/`transformers` `from_pretrained` with the default `token=None` resolve the
+credential via `huggingface_hub.get_token()`, which reads the **`HF_TOKEN`** env var (and the
+token cache). Nothing in the app ever set that env var, so the pipeline, rewriter, and Nunchaku
+downloads all ran anonymously — hence the console warning and exposure to anonymous rate limits
+/ gated-repo denials. Threading `token=` through every call site would still miss Nunchaku's
+internal `hf_hub_download`s, so the right fix is to set the credential where the whole ecosystem
+already looks for it.
+
+### Fix
+- **`integrations.apply_hf_token_to_env`** — reads the stored HF token and sets both
+  `HF_TOKEN` and `HUGGING_FACE_HUB_TOKEN` (clears them when no token exists, so a deleted
+  credential stops authenticating). One mechanism covers every download path — pipelines,
+  rewriter, Nunchaku int4 sources, and LoRA imports — uniformly.
+- **Applied at three moments:** app **startup** (lifespan, after migrations, for the implicit
+  owner); on **`set_key`** for `huggingface` (token works immediately, no restart); and on
+  **`delete_integration`** for `huggingface` (env cleared).
+- No change needed to the `from_pretrained` call sites — they already honor `get_token()`.
+
+### Verification
+- Backend ruff clean + full suite green, incl. 3 new tests: setting an HF key exports both env
+  vars, deleting clears them, a CivitAI key leaves the HF env untouched.
+- **End-to-end, in the deployed image against the live `qie` DB + real secret key:** ran the
+  exact lifespan path — `apply_hf_token_to_env` → `APPLIED: True`, `HF_TOKEN_SET: True`, and
+  `huggingface_hub.get_token()` returns the **37-char** token (`hf_` + 34). Since every
+  `from_pretrained` reads `get_token()` when `token=None`, the downloads now authenticate.
+- (Note: uvicorn's post-migration stdout is block-buffered in the container, so the startup
+  "token applied" line lags in `docker logs`; the in-image check above is the authoritative
+  proof. The live app runs the identical startup code.)
