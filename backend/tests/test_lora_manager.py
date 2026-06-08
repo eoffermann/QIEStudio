@@ -239,8 +239,9 @@ def test_update_missing_returns_none(session, principal) -> None:
     ) is None
 
 
-def test_delete_shared_blob_kept(session, storage, principal) -> None:
-    # Two uploads of identical bytes share one content-addressed key.
+def test_import_dedups_identical_content(session, storage, principal) -> None:
+    # Re-importing identical bytes for the same owner must NOT create a duplicate
+    # registry row — it returns the existing one (DESIGN §5.3 / Debug 5).
     data = make_safetensors()
     a = lora_manager.import_from_upload(
         data=data, filename="a.safetensors", session=session, storage=storage, principal=principal
@@ -248,11 +249,27 @@ def test_delete_shared_blob_kept(session, storage, principal) -> None:
     b = lora_manager.import_from_upload(
         data=data, filename="b.safetensors", session=session, storage=storage, principal=principal
     )
+    assert b.id == a.id
+    assert len(lora_manager.list_loras(session=session, principal=principal)) == 1
+
+
+def test_delete_shared_blob_kept(session, storage, principal) -> None:
+    # Identical bytes imported by two *different* owners share one content-addressed
+    # key (dedup is per-owner), so deleting one owner's row must keep the blob.
+    other = Principal(owner_id="other-owner", workspace_id="other-ws")
+    data = make_safetensors()
+    a = lora_manager.import_from_upload(
+        data=data, filename="a.safetensors", session=session, storage=storage, principal=principal
+    )
+    b = lora_manager.import_from_upload(
+        data=data, filename="b.safetensors", session=session, storage=storage, principal=other
+    )
+    assert a.id != b.id
     assert a.storage_key == b.storage_key
     lora_manager.delete_lora(
         lora_id=a.id, session=session, storage=storage, principal=principal
     )
-    # Blob must survive because b still references it.
+    # Blob must survive because the other owner's row still references it.
     assert storage.exists(b.storage_key)
 
 

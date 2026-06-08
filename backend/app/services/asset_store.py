@@ -342,7 +342,11 @@ def list_assets(
     if q:
         needle = q.lower()
         assets = [
-            a for a in assets if needle in a.name.lower() or needle in a.description.lower()
+            a
+            for a in assets
+            if needle in a.name.lower()
+            or needle in a.description.lower()
+            or any(needle in t.lower() for t in a.tags)
         ]
     return assets
 

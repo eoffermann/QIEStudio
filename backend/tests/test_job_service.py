@@ -146,3 +146,35 @@ def test_ws_snapshot_for_terminal_job(client) -> None:  # noqa: ANN001
         msg = ws.receive_json()
         assert msg["type"] == "snapshot"
         assert msg["status"] == "done"
+
+
+def test_queue_pending_reorder_and_remove() -> None:
+    """The in-process queue supports listing, reordering, and removing pending jobs (§13)."""
+    from app.interfaces.queue import InProcessJobQueue, QueuedTask
+
+    q = InProcessJobQueue()  # do NOT start the worker, so tasks stay pending
+    for jid in ("a", "b", "c"):
+        q.submit(QueuedTask(job_id=jid, fn=lambda: None))
+    assert q.pending_ids() == ["a", "b", "c"]
+    q.reorder_pending(["c", "a", "b"])
+    assert q.pending_ids() == ["c", "a", "b"]
+    assert q.remove_pending("a") is True
+    assert q.pending_ids() == ["c", "b"]
+    assert q.remove_pending("zzz") is False
+
+
+def test_delete_job_removes_row(session, principal) -> None:
+    from app.interfaces.storage import build_storage_provider
+
+    submit = JobSubmit(mode="generate", prompt="x",
+                       resolution=ResolutionSpec(base=512, orientation="square", aspect="1:1"))
+    job = job_service.create_job(submit, session=session, principal=principal)
+    storage = build_storage_provider()
+    assert job_service.delete_job(
+        job.id, session=session, storage=storage, principal=principal
+    ) is True
+    assert session.get(Job, job.id) is None
+    # Deleting a non-existent job is a no-op.
+    assert job_service.delete_job(
+        "nope", session=session, storage=storage, principal=principal
+    ) is False

@@ -323,6 +323,13 @@ export interface Job {
   outputs: JobOutput[];
 }
 
+// GET /api/jobs/queue (app/schemas/jobs.py::QueueState): the running job + pending ids in
+// execution order.
+export interface QueueState {
+  running: string | null;
+  pending: string[];
+}
+
 // Resolution spec embedded in a JobSubmit (app/schemas/jobs.py::ResolutionSpec).
 export interface ResolutionSpec {
   base?: number | string | null; // int | "match"

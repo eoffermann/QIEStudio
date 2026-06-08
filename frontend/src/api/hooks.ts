@@ -264,3 +264,31 @@ export function useCancelJob() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["jobs"] }),
   });
 }
+
+export function useDeleteJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => jobsApi.remove(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["jobs"] }),
+  });
+}
+
+/** Live queue snapshot (running + pending order); polls while there is work. */
+export function useQueue() {
+  return useQuery({
+    queryKey: qk.queue,
+    queryFn: jobsApi.queue,
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      return d && (d.running || d.pending.length) ? 1500 : false;
+    },
+  });
+}
+
+export function useReorderQueue() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (job_ids: string[]) => jobsApi.reorder(job_ids),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["jobs"] }),
+  });
+}

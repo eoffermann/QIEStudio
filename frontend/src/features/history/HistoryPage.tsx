@@ -1,5 +1,15 @@
 import { useState } from "react";
-import { Search, History as HistoryIcon, RotateCcw, Eye } from "lucide-react";
+import {
+  Search,
+  History as HistoryIcon,
+  RotateCcw,
+  Eye,
+  Trash2,
+  X,
+  ArrowUp,
+  ArrowDown,
+  ListOrdered,
+} from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { EmptyState } from "@/components/EmptyState";
 import { Input } from "@/components/ui/input";
@@ -7,7 +17,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useJobHistory } from "@/api/hooks";
+import {
+  useJobHistory,
+  useQueue,
+  useCancelJob,
+  useDeleteJob,
+  useReorderQueue,
+} from "@/api/hooks";
 import { useUi } from "@/store/ui";
 import { useNavigate } from "react-router-dom";
 import { timeAgo } from "@/lib/utils";
@@ -30,8 +46,12 @@ export function HistoryPage() {
     q: q || undefined,
     mode: mode === "all" ? undefined : mode,
   });
+  const queue = useQueue();
   const navigate = useNavigate();
   const setActiveJob = useUi((s) => s.setActiveJob);
+  const cancel = useCancelJob();
+  const del = useDeleteJob();
+  const reorder = useReorderQueue();
 
   const rerun = (job: Job) => {
     applyJobSettings(job);
@@ -39,12 +59,103 @@ export function HistoryPage() {
     toast.success("Loaded settings — press Generate to re-run");
   };
 
+  const remove = (job: Job) => {
+    if (!window.confirm("Delete this job and its outputs? This cannot be undone.")) return;
+    del.mutate(job.id, { onSuccess: () => toast.success("Job deleted") });
+  };
+
+  const byId = new Map((data ?? []).map((j) => [j.id, j]));
+  const running = queue.data?.running ? byId.get(queue.data.running) : undefined;
+  const pending = (queue.data?.pending ?? []).map((id) => byId.get(id)).filter(Boolean) as Job[];
+
+  const movePending = (index: number, dir: -1 | 1) => {
+    const ids = pending.map((j) => j.id);
+    const target = index + dir;
+    if (target < 0 || target >= ids.length) return;
+    [ids[index], ids[target]] = [ids[target], ids[index]];
+    reorder.mutate(ids);
+  };
+
   return (
     <div className="space-y-5 p-6">
       <PageHeader
-        title="History"
-        description="Past jobs with full reproducibility metadata. Search, filter, and re-run."
+        title="Queue & History"
+        description="Manage the run queue (reorder, cancel, delete) and review / re-run / delete past jobs."
       />
+
+      {/* --- Queue (running + pending) --- */}
+      {(running || pending.length > 0) && (
+        <div className="space-y-2 rounded-2xl border bg-card/50 p-4">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <ListOrdered className="h-4 w-4 text-primary" /> Queue
+            <Badge variant="muted" className="text-[10px]">
+              {(running ? 1 : 0) + pending.length} active
+            </Badge>
+          </div>
+          {running && (
+            <div className="flex items-center gap-3 rounded-xl border border-primary/40 bg-primary/5 p-2.5">
+              <Badge variant="default">running</Badge>
+              <span className="min-w-0 flex-1 truncate text-sm">{running.prompt}</span>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8"
+                title="Cancel"
+                onClick={() => cancel.mutate(running.id, { onSuccess: () => toast.success("Cancelling…") })}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
+          {pending.map((job, i) => (
+            <div key={job.id} className="flex items-center gap-2 rounded-xl border p-2.5">
+              <span className="w-6 text-center font-mono text-xs text-muted-foreground">
+                {i + 1}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-sm">{job.prompt}</span>
+              <Badge variant="muted" className="text-[10px]">{job.mode}</Badge>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7"
+                title="Move up"
+                disabled={i === 0 || reorder.isPending}
+                onClick={() => movePending(i, -1)}
+              >
+                <ArrowUp className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7"
+                title="Move down"
+                disabled={i === pending.length - 1 || reorder.isPending}
+                onClick={() => movePending(i, 1)}
+              >
+                <ArrowDown className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7"
+                title="Cancel"
+                onClick={() => cancel.mutate(job.id, { onSuccess: () => toast.success("Canceled") })}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7 text-destructive"
+                title="Delete"
+                onClick={() => remove(job)}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="flex items-center gap-3">
         <Tabs value={mode} onValueChange={(v) => setMode(v as Mode | "all")}>
@@ -116,6 +227,17 @@ export function HistoryPage() {
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-1">
+                {(job.status === "queued" || job.status === "running") && (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8"
+                    title="Cancel"
+                    onClick={() => cancel.mutate(job.id, { onSuccess: () => toast.success("Canceled") })}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
                 <Button
                   size="icon"
                   variant="ghost"
@@ -130,6 +252,15 @@ export function HistoryPage() {
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => rerun(job)}>
                   <RotateCcw className="h-3.5 w-3.5" /> Re-run
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8 text-destructive"
+                  title="Delete"
+                  onClick={() => remove(job)}
+                >
+                  <Trash2 className="h-4 w-4" />
                 </Button>
               </div>
             </div>

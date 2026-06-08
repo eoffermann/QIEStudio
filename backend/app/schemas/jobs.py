@@ -111,6 +111,19 @@ class JobRead(BaseModel):
     outputs: list[JobOutputRead] = Field(default_factory=list)
 
 
+class ReorderRequest(BaseModel):
+    """Body for ``POST /api/jobs/reorder`` — the desired execution order of pending jobs."""
+
+    job_ids: list[str]
+
+
+class QueueState(BaseModel):
+    """Current queue snapshot (DESIGN §13 queue management)."""
+
+    running: str | None
+    pending: list[str]
+
+
 class JobSubmitResponse(BaseModel):
     job_id: str
 

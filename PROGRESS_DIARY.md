@@ -920,3 +920,97 @@ icon when a LoRA has no preview).
   (`GET /api/assets/<bad>` → 404, `GET /api/loras/<bad>/thumb` → 404).
 - Frontend `tsc` strict green; headless multi-page probe of the live app — all 6 routes render
   with content, **0 page errors, 0 HTTP ≥400**.
+
+
+## Debug 4 — No way to delete/reorder/cancel queued jobs
+
+### Complaint (operator, verbatim)
+> The job queue doesn't seem to have any way to delete prior jobs, or to delete/reorder/cancel
+> pending jobs.
+
+### Analysis
+The job subsystem could *submit*, *cancel a running job*, and *list history*, but it had no
+queue-management surface at all:
+- The `InProcessJobQueue` wrapped a `queue.Queue` (opaque FIFO) — you couldn't enumerate what
+  was pending, remove an item, or change order without draining it.
+- `cancel_job` only flipped a DB status flag; a still-queued task stayed in the FIFO and would
+  later run anyway (cancel was effectively a no-op for *pending* jobs).
+- There was no `delete` at all — no way to remove a finished/errored job or its output files.
+
+So the gap was real and spanned the queue interface, the service layer, the REST surface, and
+the frontend.
+
+### Fix
+- **Queue interface (`interfaces/queue.py`)** — replaced the `queue.Queue` FIFO with an ordered
+  `list` guarded by a `threading.Condition`. Added `pending_ids()`, `remove_pending(job_id)`,
+  and `reorder_pending(ordered_ids)` (stable: ids not listed keep their relative order). The
+  worker now waits on the condition and pops index 0, so the pending list is fully inspectable
+  and mutable while the single worker keeps draining it one at a time.
+- **Service (`services/job_service.py`)** — `cancel_job` now also calls `remove_pending` so
+  cancelling a *queued* job actually dequeues it. Added `delete_job` (cancels + dequeues, then
+  deletes `JobOutput` rows, their output assets via the asset store, `JobInput` rows, and the
+  job row), `reorder_pending`, and `queue_state()` → `{running, pending}`.
+- **REST (`routers/jobs.py`)** — `GET /api/jobs/queue`, `POST /api/jobs/reorder`,
+  `DELETE /api/jobs/{id}` (the two literal routes are registered **before** `/{job_id}` so they
+  aren't shadowed). New `QueueState` / `ReorderRequest` schemas.
+- **Frontend** — `jobsApi.queue/reorder/remove`, `useQueue` (polls every 1.5 s while there is
+  work), `useReorderQueue`, `useDeleteJob`. Rewrote the History page into **"Queue & History"**:
+  a live Queue section (running job + ordered pending with up/down reorder, cancel, delete) plus
+  per-row Cancel (queued/running) and Delete (confirm) on history.
+
+A unit test (`NameError: JobOutput`) caught that `delete_job` referenced `JobOutput` without
+importing it — fixed the import; that's exactly the bug the test existed to catch.
+
+### Verification
+- Backend ruff clean + **211 passed** (3 skipped: GPU/rembg), incl. new
+  `test_queue_pending_reorder_and_remove` and `test_delete_job_removes_row`.
+- Live API after redeploy: `GET /api/jobs/queue` → `{"running":null,"pending":[]}`;
+  `POST /api/jobs/reorder {"job_ids":[]}` → 200.
+- Headless probe: `/history` ("Queue & History") renders (rootLen 2257), 0 page errors, 0 HTTP≥400.
+
+
+## Debug 5 — Duplicate LoRAs; library images show a UUID with no way to title/tag them
+
+### Complaint (operator, verbatim)
+> When I look at the LoRAs panel, it currently looks like there are five identical LoRAs loaded.
+> All of them are `Qwen-Image-Lightning-8step-V2`. We should be able to recognize this and
+> prevent it. Additionally, when images are added to the library, showing a UUID underneath them
+> isn't very helpful. Search seems to suggest that we could search for them by tags, but there's
+> no way to inspect the tags, edit them, assign a title to them, etc.
+
+### Analysis
+Two distinct issues:
+1. **Duplicate LoRAs.** `lora_manager._persist` content-addresses the *blob* (sha256 → sharded
+   storage key, written once), but it created a new `Lora` **row** on every import regardless.
+   Re-running the same import five times → five identical rows over one shared blob. Confirmed
+   on the live DB: five rows, all sha `5bdbf6991228`, owner `local`.
+2. **Asset titling/tagging.** Promoted generation outputs are named `"<job_id>-<n>"`, which the
+   card rendered verbatim — that's the "UUID" the operator saw. The backend already supported
+   `PATCH /api/assets/{id}` (name/description/tags) and `usePatchAsset` existed, but **no UI
+   exposed it**, so titles/tags were uneditable. Worse, the search box advertised *"Search by
+   name or tag…"* while `list_assets`' free-text `q` filter matched only name + description —
+   a broken contract: tag search didn't actually work.
+
+### Fix
+- **Dedup (`lora_manager._persist`)** — before creating a row, look up an existing `Lora` with
+  the same `sha256` **and** `owner_id`; if found, return it idempotently (logged). All four
+  import paths funnel through `_persist`, so upload / URL / CivitAI / HF are all covered. Dedup
+  is per-owner, so cross-owner blob sharing (and the delete-keeps-shared-blob guard) still works.
+- **Existing dupes** — cleaned the live `qie` DB: deleted the 4 newer rows, kept the earliest
+  (no `prompt_lora` FK references existed, so safe; the shared blob stays referenced).
+- **Asset search (`asset_store.list_assets`)** — the `q` filter now also matches any tag, making
+  the "name or tag" promise honest.
+- **Frontend (`ImagesPage`)** — added an **Edit dialog** (title + comma-separated tags +
+  description) wired to `usePatchAsset`; tags render as badges on each card; a `displayName()`
+  helper shows **"Untitled"** instead of an auto-generated `<uuid>-<n>` name.
+
+### Verification
+- Backend ruff clean + full suite green; updated `test_lora_manager` (new
+  `test_import_dedups_identical_content`; repurposed `test_delete_shared_blob_kept` to use two
+  owners) and `test_asset_store` (free-text `q` matches a tag) all pass.
+- Live after redeploy: `GET /api/loras` → **1** lora. Re-importing the *same* URL returned the
+  **same id** (`d761a339…`) and the count stayed **1** — dedup proven end-to-end.
+- Live `PATCH /api/assets/{id}` set title "Sunset portrait" + tags; `GET …?q=test-tag` (a
+  tag-only term, absent from name/description) returned that asset — tag search works. Test
+  asset reverted afterward.
+- Frontend `tsc` strict + `vite build` green; headless probe of `/images` renders, 0 errors.

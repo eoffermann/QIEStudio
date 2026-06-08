@@ -24,6 +24,7 @@ import type {
   ModelCatalog,
   Prompt,
   PromptCreate,
+  QueueState,
   Recipe,
   RecipeCreate,
   ResolutionEnums,
@@ -165,6 +166,11 @@ export const jobsApi = {
   get: (id: string) => api<Job>(`/jobs/${id}`),
   cancel: (id: string) =>
     api<{ canceled: boolean }>(`/jobs/${id}/cancel`, { method: "POST" }),
+  remove: (id: string) =>
+    api<{ deleted: boolean }>(`/jobs/${id}`, { method: "DELETE" }),
+  queue: () => api<QueueState>("/jobs/queue"),
+  reorder: (job_ids: string[]) =>
+    api<QueueState>("/jobs/reorder", { method: "POST", body: { job_ids } }),
   history: (q?: {
     status?: JobStatus;
     mode?: Mode;

@@ -15,4 +15,5 @@ export const qk = {
   loras: ["loras"] as const,
   jobs: (filter?: Record<string, unknown>) => ["jobs", filter ?? {}] as const,
   job: (id: string) => ["job", id] as const,
+  queue: ["jobs", "queue"] as const,
 };

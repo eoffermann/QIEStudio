@@ -220,6 +220,9 @@ def test_list_filter_by_scope_source_tag_and_query(session, storage, principal) 
     assert [a.id for a in tagged] == [up.id]
     found = asset_store.list_assets(session=session, principal=principal, q="alpha room")
     assert [a.id for a in found] == [up.id]
+    # Free-text query also matches tags (the search box advertises "name or tag").
+    by_tag = asset_store.list_assets(session=session, principal=principal, q="stag")
+    assert [a.id for a in by_tag] == [up.id]
     none = asset_store.list_assets(session=session, principal=principal, q="zzz-nomatch")
     assert none == []
 

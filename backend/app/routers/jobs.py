@@ -23,6 +23,8 @@ from app.schemas.jobs import (
     JobRead,
     JobSubmit,
     JobSubmitResponse,
+    QueueState,
+    ReorderRequest,
 )
 from app.services import job_service
 from app.services.progress_hub import get_progress_hub
@@ -124,6 +126,20 @@ def history(
     return [_serialize(j, _outputs_for(j.id, session)) for j in jobs]
 
 
+@router.get("/queue", response_model=QueueState)
+def queue_state() -> QueueState:
+    """The running job + pending jobs in execution order (DESIGN §13 queue management)."""
+    state = job_service.queue_state()
+    return QueueState(running=state["running"], pending=state["pending"])
+
+
+@router.post("/reorder", response_model=QueueState)
+def reorder(payload: ReorderRequest) -> QueueState:
+    """Reorder the pending jobs to the given execution order (DESIGN §13)."""
+    pending = job_service.reorder_pending(payload.job_ids)
+    return QueueState(running=job_service.queue_state()["running"], pending=pending)
+
+
 @router.get("/{job_id}", response_model=JobRead)
 def get_job(job_id: str, session: DbSession, principal: CurrentPrincipal) -> JobRead:
     job = session.get(Job, job_id)
@@ -138,6 +154,19 @@ def cancel(job_id: str, session: DbSession, principal: CurrentPrincipal) -> dict
     if job is None or job.owner_id != principal.owner_id:
         raise HTTPException(status_code=404, detail="Job not found")
     return {"canceled": job_service.cancel_job(job_id, session=session)}
+
+
+@router.delete("/{job_id}")
+def delete_job(
+    job_id: str, session: DbSession, principal: CurrentPrincipal, storage: Storage
+) -> dict[str, bool]:
+    """Delete a job + its outputs (cancels/dequeues it first if pending/running) (DESIGN §13)."""
+    deleted = job_service.delete_job(
+        job_id, session=session, storage=storage, principal=principal
+    )
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"deleted": True}
 
 
 def _stream_output(job_id: str, output_id: str, session, storage, *, thumb: bool):  # noqa: ANN001

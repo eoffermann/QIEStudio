@@ -119,6 +119,22 @@ def _persist(
         raise ValueError(f"{filename!r} does not look like a safetensors file")
 
     sha256 = _sha256(data)
+
+    # Deduplicate by content: importing the same weights twice (e.g. the same
+    # HF/CivitAI LoRA, or re-uploading a file) must not create duplicate registry
+    # rows. The sha256 is the natural key; return the existing row idempotently.
+    existing = session.exec(
+        select(Lora).where(Lora.sha256 == sha256, Lora.owner_id == principal.owner_id)
+    ).first()
+    if existing is not None:
+        log.info(
+            "LoRA %r already registered (sha256 %s…) — returning existing row %s",
+            existing.name,
+            sha256[:12],
+            existing.id,
+        )
+        return existing
+
     key = _storage_key(sha256, filename)
     if not storage.exists(key):
         storage.put_bytes(key, data)

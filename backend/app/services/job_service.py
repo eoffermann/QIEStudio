@@ -29,7 +29,7 @@ from app.interfaces.queue import QueuedTask, get_job_queue
 from app.interfaces.storage import StorageProvider, build_storage_provider
 from app.logging_utils import phase
 from app.models.base import utcnow
-from app.models.job import Job, JobInput
+from app.models.job import Job, JobInput, JobOutput
 from app.services import asset_store, lora_manager, prompt_store, resolution
 from app.services.progress_hub import get_progress_hub
 
@@ -241,7 +241,9 @@ def cancel_job(job_id: str, *, session: Session) -> bool:
     job = session.get(Job, job_id)
     if job is None or job.status in ("done", "error", "canceled"):
         return False
-    get_job_queue().request_cancel(job_id)
+    queue = get_job_queue()
+    queue.request_cancel(job_id)
+    queue.remove_pending(job_id)  # drop it from the queue if it hasn't started
     if job.status == "queued":  # not yet running — cancel immediately
         job.status = "canceled"
         job.ended_at = utcnow()
@@ -249,6 +251,60 @@ def cancel_job(job_id: str, *, session: Session) -> bool:
         session.commit()
         get_progress_hub().publish(job_id, {"type": "status", "status": "canceled"})
     return True
+
+
+def delete_job(
+    job_id: str, *, session: Session, storage: StorageProvider, principal: Principal
+) -> bool:
+    """Delete a job and its outputs (DESIGN §13 queue management).
+
+    Cancels + dequeues the job first if it is queued/running, then removes its output assets
+    (binaries + rows), its JobInput/JobOutput rows, and the job row itself. Input assets
+    (user uploads) are left intact — only the JobInput links are removed.
+    """
+    job = session.get(Job, job_id)
+    if job is None or job.owner_id != principal.owner_id:
+        return False
+
+    queue = get_job_queue()
+    queue.request_cancel(job_id)
+    queue.remove_pending(job_id)
+
+    outputs = session.exec(select(JobOutput).where(JobOutput.job_id == job_id)).all()
+    output_asset_ids = [o.asset_id for o in outputs if o.asset_id]
+    # Delete JobOutput rows first so the asset FK can be removed without a violation.
+    for o in outputs:
+        session.delete(o)
+    for ji in session.exec(select(JobInput).where(JobInput.job_id == job_id)).all():
+        session.delete(ji)
+    session.flush()
+    for aid in output_asset_ids:
+        try:
+            asset_store.delete_asset(
+                asset_id=aid, session=session, principal=principal, storage=storage
+            )
+        except Exception:  # noqa: BLE001 — best-effort binary cleanup; never block the delete
+            log.warning("Could not delete output asset %s for job %s", aid, job_id, exc_info=True)
+    session.delete(job)
+    session.commit()
+    log.info("Deleted job %s (+%d output assets)", job_id, len(output_asset_ids))
+    return True
+
+
+def reorder_pending(ordered_ids: list[str]) -> list[str]:
+    """Reorder the pending (not-yet-started) jobs to match ``ordered_ids`` (DESIGN §13).
+
+    Returns the resulting pending order.
+    """
+    queue = get_job_queue()
+    queue.reorder_pending(ordered_ids)
+    return queue.pending_ids()
+
+
+def queue_state() -> dict[str, Any]:
+    """Current queue snapshot: the running job id (if any) + pending ids in execution order."""
+    queue = get_job_queue()
+    return {"running": queue.running_job, "pending": queue.pending_ids()}
 
 
 # --- Run (worker thread) ---------------------------------------------------------------
