@@ -23,6 +23,7 @@ by the ``@pytest.mark.gpu`` tests.
 
 from __future__ import annotations
 
+import contextlib
 import io
 import logging
 from dataclasses import dataclass, field
@@ -265,6 +266,8 @@ class PipelineService:
         self._pipeline: Any | None = None
         self._load_key: tuple[str, str, str | None, str, str] | None = None
         self._active_adapters: list[str] = []
+        # Forward-hook handles for the manual (SVDQuant/int4) LoRA path; removed on reset.
+        self._lora_hooks: list[Any] = []
 
     # -- loading ------------------------------------------------------------------------
 
@@ -529,15 +532,18 @@ class PipelineService:
     # -- LoRA stacking ------------------------------------------------------------------
 
     def apply_loras(self, loras: list[dict[str, Any]]) -> None:
-        """Load + activate the given LoRAs with per-adapter weights (DESIGN §5.3).
+        """Load + activate the given LoRAs with per-adapter weights — **precision-aware**.
 
-        Any previously-applied adapters are unloaded first so each job starts clean. Each
-        descriptor is ``{"path": <local safetensors path>, "weight": float,
-        "adapter_name": str}``; ``adapter_name`` defaults to a stable name derived from the
-        list position when omitted.
+        Standard bf16/fp8 transformers use the diffusers PEFT path
+        (``load_lora_weights`` + ``set_adapters``). For **Nunchaku SVDQuant int4**
+        transformers — whose ``SVDQW4A4Linear`` layers PEFT cannot wrap — we apply each LoRA
+        ourselves as a parallel **fp16 low-rank correction** via forward hooks:
+        ``y = svdquant_int4_linear(x) + scale · up(down(x))``. That is mathematically exactly
+        LoRA, leaves the int4 base path untouched, and works for any external diffusers/kohya
+        LoRA — so int4 (the workstation/gaming-card path) gets full LoRA support too (§5.3).
 
-        Args:
-            loras: Ordered LoRA descriptors to apply.
+        Each descriptor is ``{"path": <local safetensors>, "weight": float,
+        "adapter_name": str}``.
 
         Raises:
             RuntimeError: If called before a pipeline is loaded.
@@ -549,36 +555,83 @@ class PipelineService:
         if not loras:
             return
 
-        pipeline = self._pipeline
+        transformer = getattr(self._pipeline, "transformer", None)
+        if self._is_svdquant(transformer):
+            self._apply_loras_manual(transformer, loras)
+        else:
+            self._apply_loras_peft(self._pipeline, loras)
+
+    @staticmethod
+    def _is_svdquant(transformer: Any) -> bool:
+        """True if the transformer uses Nunchaku SVDQuant layers (PEFT can't wrap them)."""
+        if transformer is None:
+            return False
+        if type(transformer).__module__.lower().startswith("nunchaku"):
+            return True
+        return any(type(m).__name__.startswith("SVDQ") for m in transformer.modules())
+
+    def _apply_loras_peft(self, pipeline: Any, loras: list[dict[str, Any]]) -> None:
+        """Standard diffusers PEFT LoRA path (bf16/fp8)."""
         names: list[str] = []
         weights: list[float] = []
-        with phase(log, f"Loading {len(loras)} LoRA adapter(s)"):
+        with phase(log, f"Loading {len(loras)} LoRA adapter(s) [PEFT]"):
             for i, entry in enumerate(loras):
-                path = entry["path"]
                 name = str(entry.get("adapter_name") or f"lora_{i}")
                 weight = float(entry.get("weight", 1.0))
-                log.info("  LoRA %s <- %s (weight=%.3f)", name, path, weight)
-                pipeline.load_lora_weights(path, adapter_name=name)
+                log.info("  LoRA %s <- %s (weight=%.3f)", name, entry["path"], weight)
+                pipeline.load_lora_weights(entry["path"], adapter_name=name)
                 names.append(name)
                 weights.append(weight)
-
-        # Activate all adapters with their per-adapter weights (PEFT set_adapters).
         pipeline.set_adapters(names, adapter_weights=weights)
         self._active_adapters = names
 
+    def _apply_loras_manual(self, transformer: Any, loras: list[dict[str, Any]]) -> None:
+        """Precision-aware manual LoRA for SVDQuant int4 via parallel fp16 forward hooks."""
+        import torch
+
+        with phase(log, f"Applying {len(loras)} LoRA(s) to SVDQuant int4 (manual fp16 hooks)"):
+            for i, entry in enumerate(loras):
+                name = str(entry.get("adapter_name") or f"lora_{i}")
+                weight = float(entry.get("weight", 1.0))
+                pairs = _load_lora_pairs(entry["path"])
+                matched = 0
+                for module_path, down, up, alpha in pairs:
+                    module = _resolve_submodule(transformer, module_path)
+                    if module is None:
+                        continue
+                    rank = down.shape[0]
+                    scale = weight * (float(alpha) / rank if alpha is not None else 1.0)
+                    handle = module.register_forward_hook(
+                        _make_lora_hook(down, up, scale, torch)
+                    )
+                    self._lora_hooks.append(handle)
+                    matched += 1
+                log.info(
+                    "  LoRA %s <- %s (weight=%.3f): %d/%d target modules matched",
+                    name, entry["path"], weight, matched, len(pairs),
+                )
+                if matched == 0:
+                    raise RuntimeError(
+                        f"LoRA {entry['path']!r} matched no modules on the SVDQuant "
+                        "transformer — key/layout mismatch."
+                    )
+                self._active_adapters.append(name)
+
     def _reset_loras(self) -> None:
-        """Unload any active LoRA adapters so the next job starts from the base weights."""
-        if not self._active_adapters or self._pipeline is None:
-            self._active_adapters = []
-            return
-        pipeline = self._pipeline
-        try:
-            if hasattr(pipeline, "delete_adapters"):
-                pipeline.delete_adapters(self._active_adapters)
-            elif hasattr(pipeline, "unload_lora_weights"):
-                pipeline.unload_lora_weights()
-        except Exception:  # noqa: BLE001 — never let LoRA cleanup abort the next job
-            log.exception("Failed to cleanly reset LoRA adapters; continuing")
+        """Unload any active LoRA adapters (PEFT) and remove manual int4 hooks."""
+        for handle in self._lora_hooks:
+            with contextlib.suppress(Exception):
+                handle.remove()
+        self._lora_hooks = []
+        if self._active_adapters and self._pipeline is not None:
+            pipeline = self._pipeline
+            try:
+                if hasattr(pipeline, "delete_adapters"):
+                    pipeline.delete_adapters(self._active_adapters)
+                elif hasattr(pipeline, "unload_lora_weights"):
+                    pipeline.unload_lora_weights()
+            except Exception:  # noqa: BLE001 — never let LoRA cleanup abort the next job
+                log.debug("PEFT LoRA reset skipped/failed; continuing", exc_info=True)
         self._active_adapters = []
 
     # -- running ------------------------------------------------------------------------
@@ -775,6 +828,77 @@ def _latents_to_preview_image(pipeline: Any, latents: Any, *, max_edge: int) -> 
         scale = max_edge / float(longest)
         image = image.resize((max(1, int(width * scale)), max(1, int(height * scale))))
     return image
+
+
+# --- Manual LoRA application for SVDQuant int4 (precision-aware; DESIGN §5.3) -----------
+
+# LoRA prefixes seen across diffusers / ComfyUI / kohya exports, stripped to match the
+# transformer's own module paths (e.g. "transformer_blocks.0.attn.to_q").
+_LORA_PREFIXES = ("transformer.", "diffusion_model.", "lora_unet_", "base_model.model.")
+
+
+def _strip_lora_prefix(base: str) -> str:
+    for pfx in _LORA_PREFIXES:
+        if base.startswith(pfx):
+            return base[len(pfx) :]
+    return base
+
+
+def _load_lora_pairs(path: str) -> list[tuple[str, Any, Any, float | None]]:
+    """Parse a LoRA safetensors into ``(module_path, down, up, alpha)`` tuples.
+
+    Handles both kohya (``lora_down``/``lora_up``/``alpha``) and diffusers
+    (``lora_A``/``lora_B``) naming. ``down`` is ``[rank, in]``, ``up`` is ``[out, rank]``.
+    """
+    from safetensors.torch import load_file
+
+    sd = load_file(path)
+    downs: dict[str, Any] = {}
+    ups: dict[str, Any] = {}
+    alphas: dict[str, float] = {}
+    for key, tensor in sd.items():
+        if key.endswith(".alpha"):
+            alphas[_strip_lora_prefix(key[: -len(".alpha")])] = float(tensor.reshape(-1)[0])
+        elif key.endswith(".lora_down.weight") or key.endswith(".lora_A.weight"):
+            base = key.rsplit(".lora_down.weight", 1)[0].rsplit(".lora_A.weight", 1)[0]
+            downs[_strip_lora_prefix(base)] = tensor
+        elif key.endswith(".lora_up.weight") or key.endswith(".lora_B.weight"):
+            base = key.rsplit(".lora_up.weight", 1)[0].rsplit(".lora_B.weight", 1)[0]
+            ups[_strip_lora_prefix(base)] = tensor
+    pairs: list[tuple[str, Any, Any, float | None]] = []
+    for base, down in downs.items():
+        up = ups.get(base)
+        if up is not None:
+            pairs.append((base, down, up, alphas.get(base)))
+    return pairs
+
+
+def _resolve_submodule(transformer: Any, path: str) -> Any | None:
+    """Resolve a dotted module path on the transformer, tolerating a ``transformer.`` prefix."""
+    candidates = [path]
+    if path.startswith("transformer."):
+        candidates.append(path[len("transformer.") :])
+    for candidate in candidates:
+        try:
+            return transformer.get_submodule(candidate)
+        except AttributeError:
+            continue
+    return None
+
+
+def _make_lora_hook(down: Any, up: Any, scale: float, torch: Any):  # noqa: ANN201
+    """Build a forward hook adding ``scale · up(down(x))`` (fp16) to a layer's output."""
+
+    def _hook(module: Any, inputs: tuple, output: Any) -> Any:
+        x = inputs[0]
+        d = down.to(device=x.device, dtype=x.dtype)
+        u = up.to(device=x.device, dtype=x.dtype)
+        delta = torch.nn.functional.linear(torch.nn.functional.linear(x, d), u) * scale
+        if isinstance(output, tuple):
+            return (output[0] + delta, *output[1:])
+        return output + delta
+
+    return _hook
 
 
 # --- Process singleton -----------------------------------------------------------------

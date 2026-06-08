@@ -1,0 +1,31 @@
+{
+  "app": "QIE Studio",
+  "mode": "generate",
+  "seed": 42,
+  "loras": [
+    {
+      "weight": 1.0,
+      "lora_id": "b1b3d4f38cc145c488a8093bdaca4303"
+    }
+  ],
+  "device": "cuda:0 (NVIDIA RTX A6000, SM 8.6)",
+  "prompt": "a cozy reading nook by a rainy window, soft warm light, detailed",
+  "sampler": {
+    "guidance_scale": 1.0,
+    "true_cfg_scale": 1.0,
+    "num_inference_steps": 8
+  },
+  "model_id": "Qwen/Qwen-Image",
+  "precision": "bf16",
+  "resolution": {
+    "width": 1024,
+    "height": 1024
+  },
+  "input_hashes": [],
+  "output_format": "png",
+  "model_revision": null,
+  "rewriter_model": null,
+  "schema_version": 1,
+  "enhanced_prompt": null,
+  "negative_prompt": " "
+}

@@ -66,8 +66,13 @@ def _export_job_output(job_id: str, out_dir: Path, label: str, storage) -> dict:
         return {"file": dest.name, "metadata": meta}
 
 
-def task_lora(out_dir: Path) -> dict:
-    """Import a LoRA, run a bf16 Generate with it, then capture a live preview frame."""
+def task_lora(out_dir: Path, precision: str = "bf16") -> dict:
+    """Import a LoRA and run a Generate with it applied at the given precision.
+
+    For ``int4`` this exercises the **precision-aware manual SVDQuant LoRA path** (parallel
+    fp16 hooks) — the workstation/gaming-card LoRA story (§5.3). The Lightning LoRA distills
+    to 8 steps at cfg 1.0.
+    """
     storage = build_storage_provider()
     principal = Principal()
 
@@ -78,68 +83,79 @@ def task_lora(out_dir: Path) -> dict:
                 session=session, storage=storage, principal=principal,
             )
         lora_id = lora.id
-        lora_key = lora.storage_key
         log.info("Imported LoRA %s (sha256=%s, %d bytes)", lora_id, lora.sha256, lora.bytes)
 
-    # bf16 Generate with the LoRA applied (Lightning -> 8 steps, cfg 1.0). model_cpu_offload
-    # for headroom (bf16 transformer is ~40 GB).
     submit = JobSubmit(
         mode="generate",
         prompt="a cozy reading nook by a rainy window, soft warm light, detailed",
-        precision="bf16",
+        precision=precision,
         num_inference_steps=8,
         true_cfg_scale=1.0,
         seed=42,
         resolution=ResolutionSpec(base=1024, orientation="square", aspect="1:1"),
         loras=[LoraSelection(lora_id=lora_id, weight=1.0)],
-        enable_model_cpu_offload=True,
+        # bf16 (~40 GB) needs CPU offload; int4/fp8 fit on the GPU directly.
+        enable_model_cpu_offload=(precision == "bf16"),
         preview_every_n_steps=0,
     )
     with Session(get_engine()) as session:
         job = job_service.create_job(submit, session=session, principal=principal)
         job_id = job.id
-    with phase(log, f"Running bf16+LoRA generate job {job_id}"):
+    with phase(log, f"Running {precision}+LoRA generate job {job_id}"):
         job_service.run_job(job_id)
     with Session(get_engine()) as session:
         job = session.get(Job, job_id)
         if job is None or job.status != "done":
             raise RuntimeError(f"LoRA job failed: {getattr(job, 'error', '?')}")
-    result = _export_job_output(job_id, out_dir, "lora_generate", storage)
+    result = _export_job_output(job_id, out_dir, f"lora_{precision}_generate", storage)
     assert result["metadata"].get("loras"), "repro metadata must record the applied LoRA"
     log.info("LoRA recorded in metadata: %s", result["metadata"]["loras"])
+    return result
 
-    # --- Live latent preview validation (§5.5): reuse the resident bf16+LoRA pipeline and
-    # capture the first decoded preview frame to disk. ---
+
+def task_preview(out_dir: Path) -> dict:
+    """Validate live latent previews (§5.5) on the real Qwen VAE — via the fast int4 path.
+
+    The throttled latent→RGB decode is precision-independent (uses ``pipeline.vae``), so int4
+    exercises the exact preview code path without bf16's offload cost. Captures the first
+    decoded preview frame to disk and runs the full generation to completion.
+    """
     from app.services.pipeline_service import RunRequest, StepProgress, get_pipeline_service
 
-    local = storage.local_path(lora_key)
-    preview_holder: dict[str, bytes] = {}
+    captured: dict[str, bytes] = {}
+    steps_seen: list[int] = []
 
     def _capture(p: StepProgress) -> None:
-        if p.preview_png and "png" not in preview_holder:
-            preview_holder["png"] = p.preview_png
+        steps_seen.append(p.step)
+        if p.preview_png and "png" not in captured:
+            captured["png"] = p.preview_png
             log.info("Captured live preview at step %d/%d (%d bytes)",
                      p.step, p.total, len(p.preview_png))
 
     req = RunRequest(
         mode="generate", model_id=get_settings().default_generate_model, model_revision=None,
-        precision="bf16", device="cuda:0",
-        prompt="a cozy reading nook by a rainy window, soft warm light, detailed",
-        width=1024, height=1024, num_inference_steps=8, true_cfg_scale=1.0, seed=42,
-        loras=[{"path": str(local), "weight": 1.0, "adapter_name": lora_id}],
-        preview_every_n_steps=2,
+        precision="int4", device="cuda:0",
+        prompt="a tranquil mountain lake at sunrise, mist, reflection, ultra detailed",
+        width=1024, height=1024, num_inference_steps=20, seed=2024,
+        preview_every_n_steps=4,
     )
-    with phase(log, "Capturing live latent preview (real Qwen VAE decode)"):
-        get_pipeline_service().run(req, on_step=_capture)
-    if "png" in preview_holder:
+    with phase(log, "int4 generate with live latent previews (real Qwen VAE decode)"):
+        images = get_pipeline_service().run(req, on_step=_capture)
+
+    out: dict[str, object] = {"steps_with_callback": len(steps_seen)}
+    if "png" in captured:
         pv = out_dir / f"live_preview_{_stamp()}.png"
-        pv.write_bytes(preview_holder["png"])
-        result["preview_file"] = pv.name
-        log.info("Saved live preview -> %s", pv.name)
+        pv.write_bytes(captured["png"])
+        out["preview_file"] = pv.name
+        log.info("Saved live preview -> %s (previews WORK on the real Qwen VAE)", pv.name)
     else:
-        log.warning("No live preview frame was decoded (preview path degraded to skip)")
-        result["preview_file"] = None
-    return result
+        out["preview_file"] = None
+        log.warning("No preview frame decoded — the preview path degraded to skip")
+    if images:
+        final = out_dir / f"preview_final_{_stamp()}.png"
+        images[0].save(final)
+        out["final_file"] = final.name
+    return out
 
 
 def task_enhancer(out_dir: Path) -> dict:
@@ -181,7 +197,9 @@ def task_enhancer(out_dir: Path) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--task", required=True, choices=["lora", "enhancer"])
+    parser.add_argument("--task", required=True, choices=["lora", "enhancer", "preview"])
+    parser.add_argument("--precision", default="bf16", choices=["bf16", "fp8", "int4"],
+                        help="precision for the --task lora generate")
     parser.add_argument("--out", default=os.environ.get("QIE_SMOKE_OUT", "/out"))
     args = parser.parse_args()
 
@@ -190,7 +208,12 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
 
-    result = task_lora(out_dir) if args.task == "lora" else task_enhancer(out_dir)
+    if args.task == "lora":
+        result = task_lora(out_dir, args.precision)
+    elif args.task == "enhancer":
+        result = task_enhancer(out_dir)
+    else:
+        result = task_preview(out_dir)
 
     log.info("smoke_extras[%s] OK in %.1fs", args.task, time.time() - t0)
     print(json.dumps(result, indent=2, default=str))
