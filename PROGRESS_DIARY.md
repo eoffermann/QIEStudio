@@ -637,3 +637,44 @@ work on the workstation/gaming-card int4 path, not just datacenter bf16.**
   Qwen3-VL-8B). **Next:** #11 live previews (fast int4) + finalize. Then rebuild the CUDA
   image to bake all code, re-run the full unit regression in-container, and a truthful
   status update.
+
+---
+
+## Entry 11 — Qwen-VL enhancer (real, multimodal) + live previews fixed
+
+- **Local time:** 2026-06-08 01:05 PDT
+- **Commit:** `8706e61`.
+
+### Qwen-VL prompt enhancer (#10, RUN §5 / §5.8) — RAN FOR REAL
+Loaded **Qwen3-VL-8B-Instruct** on the A6000 and ran the enhancer both ways:
+- **Generate (text):** "make it look cinematic" → a full cinematic prompt, via the vendored
+  official Generate template.
+- **Edit (multimodal):** "put it in a sunny kitchen" + the generated apple image →
+  *"Place the **red apple** on a white kitchen countertop, with natural sunlight…"* — the VL
+  model **saw the image** and grounded the rewrite in the actual apple (the whole point of
+  §5.8). Evidence: `images/enhancer_20260608_003218.json`.
+- Fixed `clean_rewrite` to unwrap the EDIT template's `{"Rewritten": "..."}` JSON (matches the
+  upstream tool's `result['Rewritten']`); added a unit test.
+
+### Live latent previews (#11, §5.5) — FIXED + VALIDATED
+The generic VAE decode failed on Qwen's **packed** latents, so the preview path silently
+skipped (all 20 callbacks fired, 0 frames decoded). Rewrote `_latents_to_preview_image` to
+mirror diffusers' exact Qwen decode (`_unpack_latents` → per-channel `latents_mean/std`
+de-normalization → 3D-VAE frame 0 → `image_processor.postprocess`), threading width/height
+through the step callback. Now every throttled step decodes a real in-progress frame.
+
+![Live latent preview at step 15/24 — a mountain lake resolving from noise](images/live_preview_20260608_005803.png)
+*A real live preview mid-generation (int4, step 15/24): the composition is emerging from
+noise — exactly the "watch it resolve" experience §5.5 calls for.*
+
+### bf16 real output (#11)
+The bf16+LoRA Generate (Entry 10) is the committed real bf16 output, completing the
+bf16/fp8/int4 precision exercise (RUN §6): bf16 (LoRA), fp8 (Entry 7 loop), int4 (Entry 9
+loop + LoRA).
+
+### State
+All four reopened audit gaps are closed **with committed GPU evidence**: int4 (#8), LoRA on
+bf16 **and** int4 (#9), Qwen-VL enhancer (#10), live previews + bf16 output (#11). **Next:**
+rebuild the CUDA image to bake all the new code (LoRA/preview/enhancer/diffusers-0.36/
+nunchaku), run the full unit suite in-container, then a truthful final status — only calling
+it done when re-verified.
