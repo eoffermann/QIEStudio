@@ -752,3 +752,16 @@ gap the earlier premature "done" missed.)
 - `/api/presets/resolution` returns the preset enumerations.
 
 The full stack (db + GPU backend + bundled frontend) boots cleanly and serves the UI + API.
+
+---
+---
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PART II — HUMAN-INITIATED DEBUGGING
+# ═══════════════════════════════════════════════════════════════════════════════
+
+Everything above (Entries 1–13) is the **autonomous build** and the human-prompted
+course-corrections that followed it. From this divider onward, the diary logs **debugging
+sessions initiated and steered by the human operator** — each one driven by a specific
+problem, question, or fix the operator raises, recorded with the same discipline (local
+time, commit id, what was investigated, what changed, and verification evidence).
