@@ -13,7 +13,7 @@ import { useSubmitJob, useSubmitBatch, useDevice } from "@/api/hooks";
 import { useResolvedResolution } from "./useResolvedResolution";
 import { gbFromMb } from "@/lib/utils";
 import { toast } from "sonner";
-import type { JobParams, JobSubmit, BatchSubmit } from "@/api/types";
+import type { JobSubmit, BatchSubmit } from "@/api/types";
 
 export function ComposerPage() {
   const mode = useComposer((s) => s.mode);
@@ -46,42 +46,43 @@ export function ComposerPage() {
     }
 
     const seed = effectiveSeed(s);
-    const params: JobParams = {
-      resolution: wh,
-      steps: s.steps,
-      true_cfg_scale: s.trueCfgScale,
-      guidance_scale: s.guidanceScale,
-      negative_prompt: s.negativePrompt,
-      seed: s.lockSeed ? seed : null,
-      batch: s.batch,
-      precision: s.precision,
-      loras: s.loras,
-      output_format: s.outputFormat,
-    };
-
+    // JobSubmit is FLAT (DESIGN §7 / app/schemas/jobs.py) — no nested params object.
     const base: JobSubmit = {
       mode: s.mode,
       model_id: s.modelId,
       prompt: s.prompt,
       enhanced_prompt: s.enhancedPrompt,
+      negative_prompt: s.negativePrompt,
       precision: s.precision,
       input_asset_ids: s.inputs.map((i) => i.asset.id),
-      params,
+      loras: s.loras,
+      resolution: { width: wh.w, height: wh.h },
+      num_inference_steps: s.steps,
+      true_cfg_scale: s.trueCfgScale,
+      guidance_scale: s.guidanceScale,
+      seed: s.lockSeed ? seed : null,
+      batch: s.batch,
+      output_format: s.outputFormat,
     };
 
     try {
       if (s.batch > 1) {
         const batchBody: BatchSubmit = {
-          ...base,
-          sweep: { type: "seed", seeds: Array.from({ length: s.batch }, () => Math.floor(Math.random() * 2 ** 31)) },
+          base,
+          sweep: {
+            kind: "seed",
+            seeds: Array.from({ length: s.batch }, () =>
+              Math.floor(Math.random() * 2 ** 31),
+            ),
+          },
         };
         const res = await submitBatch.mutateAsync(batchBody);
         setActiveBatch(res.batch_id);
         setActiveJob(res.job_ids[0] ?? null);
         toast.success(`Batch of ${res.job_ids.length} queued`);
       } else {
-        const job = await submitJob.mutateAsync(base);
-        setActiveJob(job.id);
+        const res = await submitJob.mutateAsync(base);
+        setActiveJob(res.job_id);
         toast.success("Job queued");
       }
     } catch (e) {
@@ -107,7 +108,7 @@ export function ComposerPage() {
         <div className="flex items-center gap-3">
           <div className="hidden text-right text-xs text-muted-foreground sm:block">
             <div className="font-mono text-foreground">
-              {wh.width} × {wh.height}
+              {wh.w} × {wh.h}
             </div>
             <div>{freeVram} VRAM free</div>
           </div>

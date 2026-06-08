@@ -78,15 +78,19 @@ export async function api<T>(
   return (await res.text()) as unknown as T;
 }
 
-/** Resolve a storage key to a backend file URL. */
-export function fileUrl(key: string): string {
-  return `/api/files/${encodeURIComponent(key)}`;
+/** Backend URL for an asset's full binary (DESIGN §7: GET /api/assets/{id}/file). */
+export function assetFileUrl(id: string): string {
+  return `/api/assets/${encodeURIComponent(id)}/file`;
 }
 
-/** Resolve a thumbnail storage key to a backend thumb URL. */
-export function thumbUrl(key: string | null | undefined): string | undefined {
-  if (!key) return undefined;
-  return `/api/thumbs/${encodeURIComponent(key)}`;
+/** Backend URL for an asset's WebP thumbnail (GET /api/assets/{id}/thumb).
+ *  Pass the asset's `thumb_key` (or any truthy flag); returns undefined if absent. */
+export function assetThumbUrl(
+  id: string,
+  hasThumb: string | boolean | null | undefined,
+): string | undefined {
+  if (!hasThumb) return undefined;
+  return `/api/assets/${encodeURIComponent(id)}/thumb`;
 }
 
 /** Build the WebSocket URL for job progress, honoring the current origin. */

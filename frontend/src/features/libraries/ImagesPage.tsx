@@ -13,7 +13,7 @@ import {
   usePromoteAsset,
   useDeleteAsset,
 } from "@/api/hooks";
-import { thumbUrl, fileUrl } from "@/api/client";
+import { assetThumbUrl, assetFileUrl } from "@/api/client";
 import { useComposer, newUid } from "@/store/composer";
 import { useNavigate } from "react-router-dom";
 import { formatBytes } from "@/lib/utils";
@@ -107,8 +107,8 @@ export function ImagesPage() {
               className="group relative overflow-hidden rounded-2xl border bg-card elevated"
             >
               <img
-                src={thumbUrl(a.thumb_key) ?? fileUrl(a.storage_key)}
-                alt={a.name ?? a.id}
+                src={assetThumbUrl(a.id, a.thumb_key) ?? assetFileUrl(a.id)}
+                alt={a.name || a.id}
                 className="aspect-square w-full object-cover"
               />
               <div className="p-2">

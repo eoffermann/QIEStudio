@@ -8,11 +8,10 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useJobHistory } from "@/api/hooks";
-import { useComposer } from "@/store/composer";
 import { useUi } from "@/store/ui";
 import { useNavigate } from "react-router-dom";
-import { thumbUrl, fileUrl } from "@/api/client";
 import { timeAgo } from "@/lib/utils";
+import { applyJobSettings } from "@/lib/jobSettings";
 import { toast } from "sonner";
 import type { Job, JobStatus, Mode } from "@/api/types";
 
@@ -35,15 +34,7 @@ export function HistoryPage() {
   const setActiveJob = useUi((s) => s.setActiveJob);
 
   const rerun = (job: Job) => {
-    const c = useComposer.getState();
-    c.setMode(job.mode);
-    c.setPrompt(job.prompt);
-    c.setEnhancedPrompt(job.enhanced_prompt);
-    c.setPrecision(job.precision);
-    c.setSteps(job.params_json.steps);
-    c.setTrueCfgScale(job.params_json.true_cfg_scale);
-    c.setNegativePrompt(job.params_json.negative_prompt);
-    c.setLoras(job.params_json.loras);
+    applyJobSettings(job);
     navigate("/compose");
     toast.success("Loaded settings — press Generate to re-run");
   };
@@ -95,7 +86,7 @@ export function HistoryPage() {
             >
               {job.outputs[0] ? (
                 <img
-                  src={thumbUrl(job.outputs[0].thumb_key) ?? fileUrl(job.outputs[0].storage_key)}
+                  src={job.outputs[0].thumb_url ?? job.outputs[0].file_url}
                   alt="output"
                   className="h-16 w-16 shrink-0 rounded-xl object-cover"
                 />
@@ -117,7 +108,7 @@ export function HistoryPage() {
                     </Badge>
                   )}
                   <span className="ml-auto text-xs text-muted-foreground">
-                    {timeAgo(job.created_at)}
+                    {job.created_at ? timeAgo(job.created_at) : ""}
                   </span>
                 </div>
                 <p className="mt-1 line-clamp-1 text-sm text-muted-foreground">

@@ -77,7 +77,7 @@ function ProviderRow({
   saving: boolean;
 }) {
   const [key, setKey] = useState("");
-  const status = current?.status ?? "unset";
+  const status = current?.status ?? "unconfigured";
 
   return (
     <Card>
@@ -98,12 +98,12 @@ function ProviderRow({
             <X className="h-3 w-3" /> Invalid
           </Badge>
         )}
-        {status === "unset" && <Badge variant="muted">Not set</Badge>}
+        {status === "unconfigured" && <Badge variant="muted">Not set</Badge>}
       </CardHeader>
       <CardContent className="flex items-center gap-2">
         <Input
           type="password"
-          placeholder={current?.masked_key ?? `Enter ${label} key`}
+          placeholder={current?.masked_hint ?? `Enter ${label} key`}
           value={key}
           onChange={(e) => setKey(e.target.value)}
           data-provider={provider}
@@ -111,7 +111,7 @@ function ProviderRow({
         <Button onClick={() => key && onSave(key)} disabled={saving || !key}>
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
         </Button>
-        {status !== "unset" && (
+        {status !== "unconfigured" && (
           <Button variant="ghost" size="icon" onClick={onDelete} title="Remove">
             <Trash2 className="h-4 w-4" />
           </Button>

@@ -41,7 +41,7 @@ export function PrecisionAdvisor() {
   const advice = useAdvice(
     {
       mode,
-      longer_edge: Math.max(wh.width, wh.height),
+      longer_edge: Math.max(wh.w, wh.h),
       batch,
       loras,
     },

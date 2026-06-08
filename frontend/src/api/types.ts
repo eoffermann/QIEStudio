@@ -1,4 +1,5 @@
 // TypeScript types mirroring the QIE Studio backend API (DESIGN §6 data model, §7 API).
+// The backend is the source of truth; these shapes match the Pydantic schemas exactly.
 
 export type Mode = "generate" | "edit";
 export type Precision = "bf16" | "fp8" | "int4";
@@ -10,33 +11,36 @@ export type BaseCompat = "qwen-image" | "qwen-image-edit";
 export type IntegrationProvider = "huggingface" | "civitai";
 
 // ---- Assets -----------------------------------------------------------------
+// Backend: app/schemas/assets.py::AssetRead
 
 export interface Asset {
   id: string;
   scope: AssetScope;
+  source: AssetSource;
+  source_job_id: string | null;
   storage_key: string;
   thumb_key: string | null;
-  name: string | null;
-  description: string | null;
+  name: string;
+  description: string;
   tags: string[];
+  collection: string | null;
   width: number;
   height: number;
   format: string;
   bytes: number;
   sha256: string;
-  source: AssetSource;
-  source_job_id: string | null;
   created_at: string;
   last_used_at: string | null;
 }
 
 // ---- Prompts ----------------------------------------------------------------
+// Backend: app/schemas/prompts.py
 
 export type PromptImageRole = "pinned" | "slot";
 
 export interface PromptImage {
   id?: string;
-  position: number;
+  position?: number;
   role: PromptImageRole;
   asset_id?: string | null;
   slot_name?: string | null;
@@ -50,65 +54,72 @@ export interface PromptLora {
   weight: number;
 }
 
-export interface PromptDefaults {
-  resolution_preset?: string;
-  steps?: number;
-  true_cfg_scale?: number;
-  seed?: number | null;
-}
-
 export interface Prompt {
   id: string;
   name: string;
   text: string;
   tags: string[];
   mode: Mode | "any";
-  favorite?: boolean;
-  loras: PromptLora[];
-  images: PromptImage[];
-  defaults: PromptDefaults;
+  favorite: boolean;
+  defaults_json: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+  last_used_at: string | null;
+  images: PromptImage[];
+  loras: PromptLora[];
 }
 
-export type PromptCreate = Omit<Prompt, "id" | "created_at" | "updated_at">;
+// Body for POST /api/prompts (PromptCreate). PATCH accepts the same fields, all optional.
+export interface PromptCreate {
+  name: string;
+  text?: string;
+  tags?: string[];
+  mode?: Mode | "any";
+  favorite?: boolean;
+  defaults_json?: Record<string, unknown>;
+  images?: PromptImage[];
+  loras?: PromptLora[];
+}
 
 // ---- LoRAs ------------------------------------------------------------------
+// Backend: app/schemas/loras.py
 
 export interface Lora {
   id: string;
   name: string;
   storage_key: string;
   thumb_key: string | null;
-  description: string | null;
+  description: string;
   trigger_words: string[];
   recommended_weight: number;
-  base_compat: BaseCompat;
-  modes: Mode[];
-  source: LoraSource;
-  source_ref: string | null;
-  license: string | null;
+  base_compat: string;
+  modes: string[];
+  source: string;
+  source_ref: string;
+  license: string;
+  sha256: string;
+  bytes: number;
   enabled: boolean;
   created_at: string;
 }
 
 export interface LoraSearchResult {
-  source: LoraSource;
-  ref: string;
+  source: string; // hf | civitai
   name: string;
-  description: string | null;
-  thumb_url: string | null;
+  ref: string;
+  base_model: string;
   trigger_words: string[];
-  recommended_weight: number | null;
-  base_compat: BaseCompat | null;
 }
 
 export interface LoraImportRequest {
   source: "hf" | "civitai" | "url";
   ref: string;
+  name?: string | null;
+  filename?: string | null;
 }
 
 // ---- Device / models / advisor ---------------------------------------------
+// Backend: app/schemas/advisor.py
 
 export type Backend = "cuda" | "rocm" | "mps" | "cpu";
 
@@ -137,7 +148,14 @@ export interface ModelCatalog {
   default_precision: Precision;
 }
 
-export type FitVerdict = "recommended" | "fits" | "tight" | "wont_fit" | "unavailable";
+// PrecisionOption.status is a free-form string on the backend; these are the known values.
+export type FitVerdict =
+  | "recommended"
+  | "fits"
+  | "tight"
+  | "wont_fit"
+  | "unavailable"
+  | (string & {});
 
 export interface PrecisionOption {
   precision: Precision;
@@ -149,118 +167,136 @@ export interface PrecisionOption {
   caveats: string[];
 }
 
+// Body for POST /api/models/advise (AdviseRequest). Provide longer_edge OR resolution.
 export interface AdviceRequest {
   mode: Mode;
-  longer_edge: number;
+  longer_edge?: number;
+  resolution?: ResolveRequest;
   batch: number;
   loras: { lora_id: string; weight: number }[];
 }
 
 export interface Advice {
   device: DeviceInfo;
-  recommended: Precision | null;
   options: PrecisionOption[];
+  recommended: Precision | null;
 }
 
 // ---- Rewriter (Qwen-VL) -----------------------------------------------------
+// Backend: app/schemas/rewriter.py
 
-export interface RewriterModel {
-  id: string;
-  label: string;
+export interface RewriterQuantOption {
   quant: string;
-  backends: Backend[];
-  is_default: boolean;
+  label: string;
+  backends: string[];
+  requires_runtime: string | null;
 }
 
+export interface RewriterModel {
+  model_id: string;
+  label: string;
+  est_vram_mb: number;
+  is_default: boolean;
+  co_resides_typically: boolean;
+  notes: string;
+  quant_options: RewriterQuantOption[];
+}
+
+export interface RewriterModelsResponse {
+  models: RewriterModel[];
+  default_model: string;
+}
+
+// Body for POST /api/rewriter/advise (AdviseRewriterRequest).
 export interface RewriterAdviceRequest {
   vl_model: string;
-  image_model_id: string;
-  precision: Precision;
+  image_model_resident_mb?: number;
 }
 
 export interface RewriterAdvice {
-  co_resident: boolean;
-  swap_seconds_estimate: number | null;
+  vl_model: string;
+  can_co_reside: boolean;
+  decision: string;
+  est_vl_vram_mb: number;
+  image_model_resident_mb: number;
+  free_after_image_mb: number;
   rationale: string;
 }
 
+// Body for POST /api/rewriter/enhance (EnhanceRequest).
 export interface EnhanceRequest {
   mode: Mode;
   prompt: string;
   image_ids: string[];
   vl_model?: string;
+  edit_model_id?: string;
 }
 
 export interface EnhanceResult {
-  original: string;
-  enhanced: string;
+  enhanced_prompt: string;
+  original_prompt: string;
 }
 
 // ---- Resolution -------------------------------------------------------------
+// Backend: app/schemas/advisor.py (PresetsResponse, ResolveRequest, ResolveResponse)
 
 export type Orientation = "square" | "portrait" | "landscape";
 export type BaseSize = "match" | "512" | "1024" | "1536" | "2048";
 
 export interface ResolutionEnums {
-  base_sizes: BaseSize[];
-  orientations: Orientation[];
-  aspects: Record<Orientation, string[]>;
+  base_sizes: number[];
+  match_supported: boolean;
+  default_base_size: number;
+  orientations: string[];
+  aspect_ratios: Record<string, string[]>;
+  snap_multiple: number;
 }
 
+// Body for POST /api/presets/resolution/resolve (ResolveRequest).
 export interface ResolveRequest {
-  base: BaseSize;
-  orientation: Orientation;
-  aspect: string;
-  source_dims?: { width: number; height: number } | null;
+  base: number | string; // int | "match"
+  orientation?: string;
+  aspect?: string | null;
+  source_dims?: [number, number] | null; // (width, height)
+  max_long_edge?: number | null;
 }
 
+// ResolveResponse: { w, h }.
 export interface ResolvedResolution {
-  width: number;
-  height: number;
+  w: number;
+  h: number;
 }
 
 // ---- Integrations -----------------------------------------------------------
+// Backend: app/schemas/integrations.py
+
+export type IntegrationStatusValue = "unconfigured" | "valid" | "invalid";
 
 export interface Integration {
-  provider: IntegrationProvider;
-  label: string | null;
-  status: "unset" | "valid" | "invalid";
-  masked_key: string | null;
+  provider: string;
+  label: string;
+  status: IntegrationStatusValue;
+  configured: boolean;
   last_validated_at: string | null;
+  masked_hint: string | null;
 }
 
+// Body for PUT /api/integrations/{provider} (IntegrationSet).
 export interface IntegrationSet {
   key: string;
   label?: string;
 }
 
 // ---- Jobs -------------------------------------------------------------------
-
-export interface JobInput {
-  position: number;
-  asset_id: string;
-}
+// Backend: app/schemas/jobs.py + app/routers/jobs.py::_serialize
 
 export interface JobOutput {
+  id: string;
   position: number;
-  storage_key: string;
-  thumb_key: string | null;
-  seed: number;
-  metadata_json: Record<string, unknown>;
-}
-
-export interface JobParams {
-  resolution: ResolvedResolution;
-  steps: number;
-  true_cfg_scale: number;
-  guidance_scale: number;
-  negative_prompt: string;
   seed: number | null;
-  batch: number;
-  precision: Precision;
-  loras: PromptLora[];
-  output_format: "png" | "webp" | "jpeg";
-  output_quality?: number;
+  file_url: string;
+  thumb_url: string | null;
+  metadata: Record<string, unknown>;
 }
 
 export interface Job {
@@ -275,71 +311,140 @@ export interface Job {
   prompt: string;
   enhanced_prompt: string | null;
   rewriter_model: string | null;
-  params_json: JobParams;
+  params: Record<string, unknown>;
   progress: number;
+  progress_step: number;
+  progress_total: number;
   error: string | null;
-  inputs: JobInput[];
-  outputs: JobOutput[];
-  created_at: string;
+  created_at: string | null;
   started_at: string | null;
   ended_at: string | null;
+  outputs: JobOutput[];
 }
 
+// Resolution spec embedded in a JobSubmit (app/schemas/jobs.py::ResolutionSpec).
+export interface ResolutionSpec {
+  base?: number | string | null; // int | "match"
+  orientation?: string | null;
+  aspect?: string | null;
+  width?: number | null;
+  height?: number | null;
+  max_long_edge?: number | null;
+}
+
+// Body for POST /api/jobs (JobSubmit) — FLAT fields, not nested params.
 export interface JobSubmit {
   mode: Mode;
-  model_id: string;
-  model_revision?: string | null;
-  prompt: string;
+  prompt?: string;
   enhanced_prompt?: string | null;
   rewriter_model?: string | null;
-  precision: Precision;
-  input_asset_ids: string[];
-  params: JobParams;
+  negative_prompt?: string;
+  model_id?: string | null;
+  model_revision?: string | null;
+  precision?: Precision;
+  prompt_id?: string | null;
+  input_asset_ids?: string[];
+  slot_fills?: Record<string, string[]>;
+  loras?: PromptLora[];
+  resolution?: ResolutionSpec;
+  num_inference_steps?: number;
+  true_cfg_scale?: number;
+  guidance_scale?: number;
+  seed?: number | null;
+  batch?: number;
+  output_format?: "png" | "webp" | "jpeg";
+  output_quality?: number;
+  preview_every_n_steps?: number | null;
+  enable_model_cpu_offload?: boolean;
+  enable_sequential_cpu_offload?: boolean;
+  enable_attention_slicing?: boolean;
+  enable_vae_tiling?: boolean;
 }
 
-export type SweepType = "slot" | "seed" | "param";
+export type SweepKind = "slot" | "seed" | "param";
 
-export interface BatchSubmit extends JobSubmit {
-  sweep: {
-    type: SweepType;
-    // slot: asset_ids per output; seed: list of seeds; param: grid
-    slot_asset_ids?: string[];
-    seeds?: number[];
-    param_grid?: { steps?: number[]; true_cfg_scale?: number[] };
-  };
+export interface SweepSpec {
+  kind: SweepKind;
+  slot_name?: string | null;
+  slot_asset_ids?: string[];
+  seeds?: number[];
+  steps_grid?: number[];
+  cfg_grid?: number[];
 }
 
-export interface BatchResult {
+// Body for POST /api/jobs/batch (BatchSubmit).
+export interface BatchSubmit {
+  base: JobSubmit;
+  sweep: SweepSpec;
+}
+
+export interface JobSubmitResponse {
+  job_id: string;
+}
+
+export interface BatchSubmitResponse {
   batch_id: string;
   job_ids: string[];
 }
 
+// ---- Recipes ----------------------------------------------------------------
+// Backend: app/schemas/recipes.py
+
+export interface Recipe {
+  id: string;
+  name: string;
+  description: string;
+  tags: string[];
+  mode: Mode;
+  config_json: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RecipeCreate {
+  name: string;
+  description?: string;
+  tags?: string[];
+  mode?: Mode;
+  config_json?: Record<string, unknown>;
+}
+
+// ---- Tools ------------------------------------------------------------------
+// Backend: app/schemas/tools.py — POST /api/tools/* returns { asset }.
+
+export interface ToolResult {
+  asset: Asset;
+}
+
 // ---- WebSocket progress messages -------------------------------------------
+// Backend: app/services/job_service.py publishes {type: snapshot|progress|status}.
+
+export interface JobSnapshotMessage {
+  type: "snapshot";
+  status: JobStatus;
+  progress: number;
+  step: number;
+  total: number;
+}
 
 export interface JobProgressMessage {
   type: "progress";
-  job_id: string;
-  status: JobStatus;
   step: number;
-  total_steps: number;
-  eta_seconds: number | null;
-  /** data URL or storage key for the throttled latent->RGB preview */
-  preview_url?: string | null;
+  total: number;
+  progress: number;
+  /** data:image/png;base64,... preview of the throttled latent->RGB decode */
+  preview?: string;
 }
 
-export interface JobDoneMessage {
-  type: "done";
-  job_id: string;
-  job: Job;
-}
-
-export interface JobErrorMessage {
-  type: "error";
-  job_id: string;
-  error: string;
+export interface JobStatusMessage {
+  type: "status";
+  status: JobStatus;
+  device?: string;
+  outputs?: { id: string; position: number; seed: number | null }[];
+  error?: string;
 }
 
 export type JobWsMessage =
+  | JobSnapshotMessage
   | JobProgressMessage
-  | JobDoneMessage
-  | JobErrorMessage;
+  | JobStatusMessage;

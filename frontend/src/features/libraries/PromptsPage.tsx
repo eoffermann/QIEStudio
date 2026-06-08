@@ -69,7 +69,7 @@ export function PromptsPage() {
       mode: "any",
       loras: [],
       images: [],
-      defaults: {},
+      defaults_json: {},
       favorite: false,
     });
     setNewOpen(false);

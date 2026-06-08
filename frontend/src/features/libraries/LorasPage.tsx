@@ -22,7 +22,6 @@ import {
   useDeleteLora,
   usePatchLora,
 } from "@/api/hooks";
-import { thumbUrl } from "@/api/client";
 import { toast } from "sonner";
 
 export function LorasPage() {
@@ -98,17 +97,9 @@ export function LorasPage() {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {data.map((l) => (
             <div key={l.id} className="flex gap-3 rounded-2xl border bg-card p-4 elevated">
-              {l.thumb_key ? (
-                <img
-                  src={thumbUrl(l.thumb_key)}
-                  alt={l.name}
-                  className="h-20 w-20 shrink-0 rounded-xl object-cover"
-                />
-              ) : (
-                <div className="grid h-20 w-20 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground">
-                  <Layers className="h-6 w-6" />
-                </div>
-              )}
+              <div className="grid h-20 w-20 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground">
+                <Layers className="h-6 w-6" />
+              </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate font-medium">{l.name}</span>

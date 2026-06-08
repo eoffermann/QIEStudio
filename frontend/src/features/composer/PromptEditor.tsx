@@ -46,7 +46,7 @@ export function PromptEditor() {
         prompt,
         image_ids: inputs.map((i) => i.asset.id),
       });
-      setDraftEnhanced(res.enhanced);
+      setDraftEnhanced(res.enhanced_prompt);
       setDiffOpen(true);
     } catch (e) {
       toast.error(`Enhance failed: ${(e as Error).message}`);
@@ -69,7 +69,7 @@ export function PromptEditor() {
         mode,
         loras: useComposer.getState().loras,
         images: [],
-        defaults: {},
+        defaults_json: {},
         favorite: false,
       });
       toast.success("Prompt saved");

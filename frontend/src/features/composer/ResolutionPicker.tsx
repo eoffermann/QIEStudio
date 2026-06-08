@@ -43,9 +43,9 @@ export function ResolutionPicker() {
   const isMatch = resolution.base === "match";
 
   // Proportional thumbnail (max 64px on the long edge).
-  const long = Math.max(wh.width, wh.height);
-  const thumbW = (wh.width / long) * 64;
-  const thumbH = (wh.height / long) * 64;
+  const long = Math.max(wh.w, wh.h);
+  const thumbW = (wh.w / long) * 64;
+  const thumbH = (wh.h / long) * 64;
 
   return (
     <div className="space-y-3">
@@ -128,7 +128,7 @@ export function ResolutionPicker() {
         />
         <div>
           <Badge variant="default" className="font-mono">
-            {wh.width} × {wh.height}
+            {wh.w} × {wh.h}
           </Badge>
           <div className="mt-1 text-[11px] text-muted-foreground">
             {isMatch ? "matched to first input" : "snapped to ×16"}

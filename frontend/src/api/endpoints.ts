@@ -4,8 +4,8 @@ import type {
   Advice,
   AdviceRequest,
   Asset,
-  BatchResult,
   BatchSubmit,
+  BatchSubmitResponse,
   DeviceInfo,
   EnhanceRequest,
   EnhanceResult,
@@ -15,6 +15,7 @@ import type {
   Job,
   JobStatus,
   JobSubmit,
+  JobSubmitResponse,
   Lora,
   LoraImportRequest,
   LoraSearchResult,
@@ -23,12 +24,15 @@ import type {
   ModelCatalog,
   Prompt,
   PromptCreate,
+  Recipe,
+  RecipeCreate,
   ResolutionEnums,
   ResolveRequest,
   ResolvedResolution,
   RewriterAdvice,
   RewriterAdviceRequest,
-  RewriterModel,
+  RewriterModelsResponse,
+  ToolResult,
 } from "./types";
 
 // ---- Assets -----------------------------------------------------------------
@@ -38,12 +42,18 @@ export const assetsApi = {
   upload: (files: File[]) => {
     const fd = new FormData();
     for (const f of files) fd.append("files", f);
-    return api<Asset[]>("/assets/upload", { method: "POST", formData: fd });
+    // Backend returns { assets: AssetRead[] }.
+    return api<{ assets: Asset[] }>("/assets/upload", {
+      method: "POST",
+      formData: fd,
+    }).then((r) => r.assets);
   },
   promote: (id: string) =>
     api<Asset>(`/assets/${id}/promote`, { method: "POST" }),
-  patch: (id: string, body: Partial<Pick<Asset, "name" | "description" | "tags" | "scope">>) =>
-    api<Asset>(`/assets/${id}`, { method: "PATCH", body }),
+  patch: (
+    id: string,
+    body: Partial<Pick<Asset, "name" | "description" | "tags" | "collection">>,
+  ) => api<Asset>(`/assets/${id}`, { method: "PATCH", body }),
   remove: (id: string) => api<void>(`/assets/${id}`, { method: "DELETE" }),
 };
 
@@ -91,7 +101,7 @@ export const modelsApi = {
 
 // ---- Rewriter ---------------------------------------------------------------
 export const rewriterApi = {
-  models: () => api<RewriterModel[]>("/rewriter/models"),
+  models: () => api<RewriterModelsResponse>("/rewriter/models"),
   advise: (body: RewriterAdviceRequest) =>
     api<RewriterAdvice>("/rewriter/advise", { method: "POST", body }),
   enhance: (body: EnhanceRequest) =>
@@ -117,13 +127,43 @@ export const integrationsApi = {
     api<void>(`/integrations/${provider}`, { method: "DELETE" }),
 };
 
+// ---- Recipes ----------------------------------------------------------------
+export const recipesApi = {
+  list: (q?: { q?: string; tag?: string; mode?: Mode }) =>
+    api<Recipe[]>("/recipes", { query: q }),
+  create: (body: RecipeCreate) =>
+    api<Recipe>("/recipes", { method: "POST", body }),
+  get: (id: string) => api<Recipe>(`/recipes/${id}`),
+  patch: (id: string, body: Partial<RecipeCreate>) =>
+    api<Recipe>(`/recipes/${id}`, { method: "PATCH", body }),
+  remove: (id: string) => api<void>(`/recipes/${id}`, { method: "DELETE" }),
+  instantiate: (id: string) =>
+    api<JobSubmit>(`/recipes/${id}/instantiate`, { method: "POST" }),
+};
+
+// ---- Tools ------------------------------------------------------------------
+export const toolsApi = {
+  backgroundRemoval: (assetId: string) =>
+    api<ToolResult>("/tools/background-removal/json", {
+      method: "POST",
+      body: { asset_id: assetId },
+    }),
+  upscale: (assetId: string, opts?: { scale?: number; max_long_edge?: number }) =>
+    api<ToolResult>("/tools/upscale/json", {
+      method: "POST",
+      body: { asset_id: assetId, scale: opts?.scale, max_long_edge: opts?.max_long_edge },
+    }),
+};
+
 // ---- Jobs -------------------------------------------------------------------
 export const jobsApi = {
-  submit: (body: JobSubmit) => api<Job>("/jobs", { method: "POST", body }),
+  submit: (body: JobSubmit) =>
+    api<JobSubmitResponse>("/jobs", { method: "POST", body }),
   submitBatch: (body: BatchSubmit) =>
-    api<BatchResult>("/jobs/batch", { method: "POST", body }),
+    api<BatchSubmitResponse>("/jobs/batch", { method: "POST", body }),
   get: (id: string) => api<Job>(`/jobs/${id}`),
-  cancel: (id: string) => api<Job>(`/jobs/${id}/cancel`, { method: "POST" }),
+  cancel: (id: string) =>
+    api<{ canceled: boolean }>(`/jobs/${id}/cancel`, { method: "POST" }),
   history: (q?: {
     status?: JobStatus;
     mode?: Mode;

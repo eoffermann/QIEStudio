@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useComposer, newUid, type InputImage } from "@/store/composer";
 import { useUploadAssets } from "@/api/hooks";
-import { thumbUrl, fileUrl } from "@/api/client";
+import { assetThumbUrl, assetFileUrl } from "@/api/client";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -105,8 +105,8 @@ export function InputImagesPanel() {
                     {idx + 1}
                   </div>
                   <img
-                    src={thumbUrl(img.asset.thumb_key) ?? fileUrl(img.asset.storage_key)}
-                    alt={img.asset.name ?? "input"}
+                    src={assetThumbUrl(img.asset.id, img.asset.thumb_key) ?? assetFileUrl(img.asset.id)}
+                    alt={img.asset.name || "input"}
                     className="h-12 w-12 shrink-0 rounded-lg object-cover"
                   />
                   <div className="min-w-0 flex-1">

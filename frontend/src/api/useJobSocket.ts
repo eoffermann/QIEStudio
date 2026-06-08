@@ -1,16 +1,20 @@
 // WebSocket hook subscribing to WS /ws/jobs/{id} for progress + live latent previews.
+// Backend (app/services/job_service.py) publishes {type: "snapshot"|"progress"|"status"}.
 import { useEffect, useRef, useState } from "react";
 import { jobWsUrl } from "./client";
-import type { Job, JobStatus, JobWsMessage } from "./types";
+import type { JobStatus, JobWsMessage } from "./types";
 
 export interface JobSocketState {
   connected: boolean;
   status: JobStatus | null;
   step: number;
   totalSteps: number;
-  etaSeconds: number | null;
+  progress: number;
+  /** data:image/png;base64,... live latent preview */
   previewUrl: string | null;
-  finalJob: Job | null;
+  /** True once a terminal "done" status arrived (outputs ready to refetch). */
+  done: boolean;
+  device: string | null;
   error: string | null;
 }
 
@@ -19,11 +23,14 @@ const INITIAL: JobSocketState = {
   status: null,
   step: 0,
   totalSteps: 0,
-  etaSeconds: null,
+  progress: 0,
   previewUrl: null,
-  finalJob: null,
+  done: false,
+  device: null,
   error: null,
 };
+
+const TERMINAL: JobStatus[] = ["done", "error", "canceled"];
 
 /**
  * Subscribe to a job's progress stream. Pass `null` to disconnect.
@@ -64,26 +71,36 @@ export function useJobSocket(jobId: string | null): JobSocketState {
         }
         setState((s) => {
           switch (msg.type) {
-            case "progress":
+            case "snapshot":
               return {
                 ...s,
                 status: msg.status,
                 step: msg.step,
-                totalSteps: msg.total_steps,
-                etaSeconds: msg.eta_seconds,
-                previewUrl: msg.preview_url ?? s.previewUrl,
+                totalSteps: msg.total,
+                progress: msg.progress,
+                done: s.done || msg.status === "done",
               };
-            case "done":
-              closedRef.current = true;
+            case "progress":
               return {
                 ...s,
-                status: "done",
-                finalJob: msg.job,
-                step: s.totalSteps || s.step,
+                status: s.status ?? "running",
+                step: msg.step,
+                totalSteps: msg.total,
+                progress: msg.progress,
+                previewUrl: msg.preview ?? s.previewUrl,
               };
-            case "error":
-              closedRef.current = true;
-              return { ...s, status: "error", error: msg.error };
+            case "status": {
+              const terminal = TERMINAL.includes(msg.status);
+              if (terminal) closedRef.current = true;
+              return {
+                ...s,
+                status: msg.status,
+                device: msg.device ?? s.device,
+                done: s.done || msg.status === "done",
+                error: msg.error ?? s.error,
+                step: msg.status === "done" ? s.totalSteps || s.step : s.step,
+              };
+            }
             default:
               return s;
           }

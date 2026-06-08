@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useJobSocket } from "@/api/useJobSocket";
-import { useCancelJob } from "@/api/hooks";
+import { useCancelJob, useJob } from "@/api/hooks";
 import { useUi } from "@/store/ui";
 import { ResultGallery } from "./ResultGallery";
 
@@ -13,12 +13,14 @@ export function JobProgressPanel() {
   const setActiveJob = useUi((s) => s.setActiveJob);
   const cancel = useCancelJob();
   const sock = useJobSocket(activeJobId);
+  // The "done" WS status carries no file URLs — fetch the full job for outputs.
+  const finalJob = useJob(sock.done ? activeJobId : null);
 
   if (!activeJobId) return null;
 
   const pct = sock.totalSteps ? Math.round((sock.step / sock.totalSteps) * 100) : 0;
   const running = sock.status === "running" || sock.status === "queued" || sock.status === null;
-  const done = sock.status === "done" && sock.finalJob;
+  const done = sock.status === "done";
 
   return (
     <Card className="overflow-hidden">
@@ -66,9 +68,7 @@ export function JobProgressPanel() {
               <span>
                 Step {sock.step} / {sock.totalSteps || "?"}
               </span>
-              <span>
-                {sock.etaSeconds != null ? `~${Math.ceil(sock.etaSeconds)}s left` : "—"}
-              </span>
+              <span>{pct}%</span>
             </div>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
               <motion.div
@@ -95,7 +95,7 @@ export function JobProgressPanel() {
           </>
         )}
 
-        {done && sock.finalJob && <ResultGallery job={sock.finalJob} />}
+        {done && finalJob.data && <ResultGallery job={finalJob.data} />}
       </CardContent>
     </Card>
   );

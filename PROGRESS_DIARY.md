@@ -820,3 +820,66 @@ time, commit id, what was investigated, what changed, and verification evidence)
   `FINAL_URL=/compose`, rendered content (`ROOT_LEN≈1032`), `HAS_GENERATE/SETTINGS/DEVICE_BADGE
   = true`, `GET /compose = 200`, and **`FAILS: NONE`** (no page errors, no 4xx/5xx). Black
   screen resolved.
+
+---
+
+## Debug 2 — "Enhance" shows an empty prompt → full FE↔BE contract reconciliation
+
+- **Local time:** 2026-06-08 03:45 PDT
+- **Commit:** (this entry's fix)
+
+### Complaint (operator, verbatim)
+> If I enter a prompt and click "Enhance" it obviously loads the model and seems to attempt
+> to run it, but when it shows me the enhanced prompt, the prompt itself is empty.
+>
+> (follow-up) Examine the implied contracts for all UI elements and ensure that the relevant
+> field names match between FE and BE.
+
+### Analysis
+The enhancer **service** was already proven on GPU (Debug/Entry 11 produced real text), so an
+empty *displayed* prompt meant the response field name didn't match: `PromptEditor` read
+`res.enhanced`, but the backend `/api/rewriter/enhance` returns **`enhanced_prompt`** →
+`undefined` → empty. Same root-cause class as Debug 1 (parallel agents diverged on field
+names). Per the follow-up, I then audited **every** endpoint's contract rather than fixing
+one at a time.
+
+### Troubleshooting & fix (comprehensive reconciliation, frontend → backend)
+Treated the **backend as source of truth** (it's unit-tested) and aligned the frontend's
+types, endpoint wrappers, the WebSocket hook, and every component that builds a request body
+or reads a response field. Key mismatches found + fixed:
+- **enhance:** `res.enhanced` → `res.enhanced_prompt` (the reported bug).
+- **job submit (critical, would break Generate itself):** the composer sent a **nested**
+  `{model_id, params:{resolution:{width,height}, steps,…}}`; backend `JobSubmit` is **flat**
+  (`resolution:{width,height}`, `num_inference_steps`, `true_cfg_scale`, …). Flattened.
+  Submit response `{job_id}` (FE read `job.id`); batch sweep `kind` (FE sent `type`).
+- **jobs WebSocket:** FE parsed `{type:"progress"|"done", total_steps, eta_seconds,
+  preview_url, job}`; backend publishes `{type:"snapshot"|"progress"|"status", step, total,
+  progress, preview(data-URL), status, device, outputs, error}`. Rewrote the hook to the real
+  keys; on `status:"done"` (which carries no URLs) the panel refetches the job for outputs.
+- **assets:** upload returns `{assets:[…]}` (FE expected `Asset[]`); file/thumb served at
+  `/api/assets/{id}/file|thumb` (FE built nonexistent `/api/files/{key}`); added `collection`.
+- **resolution:** resolve returns `{w,h}` (FE `{width,height}`); request `source_dims` is a
+  `[w,h]` tuple; `base` int|"match". Presets shape (`aspect_ratios`, `default_base_size`, …).
+- **integrations:** status `unconfigured|valid|invalid` + `configured`/`masked_hint`
+  (FE had `unset`/`masked_key`); PUT body `{key,label}`.
+- **rewriter models/advise:** `{models:[{model_id,label,quant_options,…}], default_model}` and
+  advise `{vl_model, image_model_resident_mb}` → `{can_co_reside, decision, …}` (FE had
+  `{id,quant,backends}` / `{image_model_id,precision}` → `{co_resident,…}`).
+- **loras / prompts:** `LoraRead`/`LoraSearchResult` fields, prompt `defaults_json` (FE
+  `defaults`). Added the previously-absent `recipes`/`tools`/`export` API types + wrappers.
+
+### Verification
+- Frontend `npm run build` (tsc strict) green against the real contract.
+- Rebuilt the CUDA image; **headless multi-page probe of the live app** — every route renders
+  with content and **zero page errors / zero HTTP ≥400**:
+  `/compose`, `/history`, `/images`, `/prompts`, `/loras`, `/settings` all clean.
+
+### Backend gaps flagged for review (NOT field mismatches; not changed)
+1. `JobOutputRead` exposes no `asset_id`, so "promote output to library" / "send output to
+   input" can't reference the output asset (the saved output *is* an asset with
+   `source_job_id`). Removed the broken promote-from-result button for now; add `asset_id` to
+   `JobOutputRead` to restore those flows.
+2. `LoraRead.thumb_key` has no streaming route (`/api/loras/{id}/thumb`), so LoRA thumbnails
+   aren't dereferenceable; thumbnail rendering dropped until a route exists.
+3. The `status:"done"` WS message intentionally omits output URLs → the UI does one extra
+   `GET /api/jobs/{id}` to render results (correct, just noted).
