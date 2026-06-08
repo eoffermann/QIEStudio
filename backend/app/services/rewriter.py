@@ -340,8 +340,31 @@ def clean_rewrite(text: str) -> str:
     out = text.strip()
     # Drop code fences the EDIT template's JSON example can elicit.
     out = out.replace("```json", "").replace("```", "").strip()
+    # The EDIT template instructs the model to answer as {"Rewritten": "..."} — unwrap it to
+    # the inner prompt, as the upstream tool does (`result['Rewritten']`).
+    out = _unwrap_rewritten(out)
     out = out.replace("\r\n", "\n").replace("\n", " ")
     return " ".join(out.split())
+
+
+def _unwrap_rewritten(text: str) -> str:
+    """If ``text`` is a ``{"Rewritten": "..."}`` JSON object, return the inner string."""
+    import contextlib
+    import json
+    import re
+
+    stripped = text.strip()
+    if stripped.startswith("{") and "ewritten" in stripped:
+        with contextlib.suppress(Exception):
+            obj = json.loads(stripped)
+            if isinstance(obj, dict):
+                for key in ("Rewritten", "rewritten"):
+                    if isinstance(obj.get(key), str):
+                        return obj[key].strip()
+        match = re.search(r'"[Rr]ewritten"\s*:\s*"(.*?)"\s*}?\s*$', stripped, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+    return text
 
 
 # --- The service -----------------------------------------------------------------------

@@ -122,13 +122,12 @@ def task_preview(out_dir: Path) -> dict:
     """
     from app.services.pipeline_service import RunRequest, StepProgress, get_pipeline_service
 
-    captured: dict[str, bytes] = {}
-    steps_seen: list[int] = []
+    frames: dict[int, bytes] = {}  # step -> preview png bytes
+    total_steps = 24
 
     def _capture(p: StepProgress) -> None:
-        steps_seen.append(p.step)
-        if p.preview_png and "png" not in captured:
-            captured["png"] = p.preview_png
+        if p.preview_png:
+            frames[p.step] = p.preview_png
             log.info("Captured live preview at step %d/%d (%d bytes)",
                      p.step, p.total, len(p.preview_png))
 
@@ -136,18 +135,24 @@ def task_preview(out_dir: Path) -> dict:
         mode="generate", model_id=get_settings().default_generate_model, model_revision=None,
         precision="int4", device="cuda:0",
         prompt="a tranquil mountain lake at sunrise, mist, reflection, ultra detailed",
-        width=1024, height=1024, num_inference_steps=20, seed=2024,
-        preview_every_n_steps=4,
+        width=1024, height=1024, num_inference_steps=total_steps, seed=2024,
+        preview_every_n_steps=3,
     )
     with phase(log, "int4 generate with live latent previews (real Qwen VAE decode)"):
         images = get_pipeline_service().run(req, on_step=_capture)
 
-    out: dict[str, object] = {"steps_with_callback": len(steps_seen)}
-    if "png" in captured:
+    out: dict[str, object] = {"preview_steps": sorted(frames)}
+    if frames:
+        # Save a recognizable mid-generation frame (~60% denoised) as the headline preview,
+        # plus an early + late frame to show the image resolving over the run.
+        steps = sorted(frames)
+        mid = min(steps, key=lambda s: abs(s - int(total_steps * 0.6)))
         pv = out_dir / f"live_preview_{_stamp()}.png"
-        pv.write_bytes(captured["png"])
+        pv.write_bytes(frames[mid])
         out["preview_file"] = pv.name
-        log.info("Saved live preview -> %s (previews WORK on the real Qwen VAE)", pv.name)
+        out["preview_step"] = f"{mid}/{total_steps}"
+        log.info("Saved live preview (step %d/%d) -> %s — previews WORK on the real Qwen VAE",
+                 mid, total_steps, pv.name)
     else:
         out["preview_file"] = None
         log.warning("No preview frame decoded — the preview path degraded to skip")

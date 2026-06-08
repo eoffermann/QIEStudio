@@ -1,0 +1,11 @@
+{
+  "generate": {
+    "original": "make it look cinematic",
+    "enhanced": "Cinematic widescreen composition with dramatic lighting, deep shadows, and high contrast to evoke emotional intensity. Use a shallow depth of field to isolate the subject while blurring the background into atmospheric bokeh. Incorporate dynamic angles \u2014 low or high perspective \u2014 to enhance drama and scale. Color grading should lean toward moody, saturated tones with a filmic grain texture for authenticity. Emphasize motion blur or slow-motion effects where appropriate to heighten tension or emotion. Frame the scene with intentional negative space or leading lines to guide the viewer\u2019s eye. Render in ultra-high-definition with cinematic lens flare, subtle chromatic aberration, and realistic reflections. Style: Hollywood blockbuster realism with a touch of noir elegance \u2014 think \u201cThe Revenant\u201d meets \u201cBlade Runner 2049.\u201d No text, no clutter \u2014 pure visual storytelling."
+  },
+  "edit": {
+    "original": "put it in a sunny kitchen",
+    "enhanced": "{ \"Rewritten\": \"Place the red apple on a white kitchen countertop, with natural sunlight streaming in from a window, casting soft shadows and highlighting the apple\u2019s glossy surface. Add a blurred background of kitchen elements like a wooden cabinet and hanging utensils to suggest a sunny kitchen setting.\" }",
+    "saw_image": true
+  }
+}

@@ -199,3 +199,12 @@ def test_clean_rewrite_strips_fences_and_collapses_newlines() -> None:
 
 def test_clean_rewrite_collapses_whitespace() -> None:
     assert clean_rewrite("  a   prompt\nwith\nlines  ") == "a prompt with lines"
+
+
+def test_clean_rewrite_unwraps_rewritten_json() -> None:
+    # The EDIT template makes the VL model answer as {"Rewritten": "..."}; unwrap it.
+    assert clean_rewrite('{"Rewritten": "a red apple on a sunny counter"}') == (
+        "a red apple on a sunny counter"
+    )
+    # Also when fenced.
+    assert clean_rewrite('```json\n{"Rewritten": "x y z"}\n```') == "x y z"

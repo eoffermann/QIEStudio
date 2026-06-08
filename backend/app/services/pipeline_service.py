@@ -692,6 +692,8 @@ class PipelineService:
             every_n=req.preview_every_n_steps,
             on_step=on_step,
             is_canceled=is_canceled,
+            width=req.width,
+            height=req.height,
         )
         kwargs["callback_on_step_end"] = callback
         kwargs["callback_on_step_end_tensor_inputs"] = ["latents"]
@@ -711,6 +713,8 @@ class PipelineService:
         every_n: int,
         on_step: Callable[[StepProgress], None] | None,
         is_canceled: Callable[[], bool] | None,
+        width: int | None,
+        height: int | None,
     ) -> Callable[..., dict[str, Any]]:
         """Build the diffusers ``callback_on_step_end`` closure (cancel + preview)."""
 
@@ -725,7 +729,7 @@ class PipelineService:
             if should_emit_preview(step, total, every_n):
                 latents = callback_kwargs.get("latents")
                 if latents is not None:
-                    preview = self._decode_preview(pipe, latents)
+                    preview = self._decode_preview(pipe, latents, width, height)
 
             if on_step is not None:
                 on_step(StepProgress(step=step, total=total, preview_png=preview))
@@ -733,18 +737,24 @@ class PipelineService:
 
         return _callback
 
-    def _decode_preview(self, pipeline: Any, latents: Any) -> bytes | None:
+    def _decode_preview(
+        self, pipeline: Any, latents: Any, width: int | None, height: int | None
+    ) -> bytes | None:
         """Decode latents to a small preview PNG; return ``None`` (skip) on any failure."""
         try:
             import torch
 
             with torch.no_grad():
-                image = _latents_to_preview_image(pipeline, latents, max_edge=_PREVIEW_MAX_EDGE)
+                image = _latents_to_preview_image(
+                    pipeline, latents, width=width, height=height, max_edge=_PREVIEW_MAX_EDGE
+                )
+            if image is None:
+                return None
             buffer = io.BytesIO()
             image.save(buffer, format="PNG")
             return buffer.getvalue()
         except Exception:  # noqa: BLE001 — a preview must never fail the job (DESIGN §5.5)
-            log.debug("Live preview decode failed; skipping this preview", exc_info=True)
+            log.warning("Live preview decode failed; skipping this preview", exc_info=True)
             return None
 
 
@@ -792,41 +802,41 @@ def _generator_device(device: str) -> str:
     return device
 
 
-def _latents_to_preview_image(pipeline: Any, latents: Any, *, max_edge: int) -> Any:
-    """Decode latents to a small ``PIL.Image`` via the pipeline's VAE (cheap preview).
+def _latents_to_preview_image(
+    pipeline: Any, latents: Any, *, width: int | None, height: int | None, max_edge: int
+) -> Any | None:
+    """Decode in-progress Qwen latents to a small ``PIL.Image`` preview (DESIGN §5.5).
 
-    Uses the pipeline's own VAE-scaling constants and image processor when available so the
-    preview matches the model's color space, then downscales to ``max_edge`` on the long
-    side to keep the decode + encode cost modest.
+    Qwen packs latents and the (3D) VAE uses per-channel ``latents_mean``/``latents_std`` — so
+    a generic ``vae.decode`` fails. This mirrors the diffusers ``QwenImagePipeline`` decode
+    path exactly: ``_unpack_latents`` → de-normalize → ``vae.decode(...)[:, :, 0]`` →
+    ``image_processor.postprocess``. Needs the target ``width``/``height`` to unpack; returns
+    ``None`` (skip) if they're unknown. Downscales to ``max_edge`` to keep the cost modest.
     """
     import torch
 
+    if width is None or height is None:
+        return None
     vae = pipeline.vae
-    latents = latents.to(dtype=vae.dtype, device=vae.device)
+    lat = pipeline._unpack_latents(latents, height, width, pipeline.vae_scale_factor)
+    lat = lat.to(dtype=vae.dtype, device=vae.device)
 
-    # Undo the diffusers latent scaling/shift where the VAE config provides it.
-    scaling = float(getattr(vae.config, "scaling_factor", 1.0) or 1.0)
-    shift = getattr(vae.config, "shift_factor", None)
-    decode_in = latents / scaling if scaling else latents
-    if shift is not None:
-        decode_in = decode_in + float(shift)
+    z_dim = vae.config.z_dim
+    mean = torch.tensor(vae.config.latents_mean).view(1, z_dim, 1, 1, 1).to(lat.device, lat.dtype)
+    inv_std = (
+        1.0 / torch.tensor(vae.config.latents_std).view(1, z_dim, 1, 1, 1).to(lat.device, lat.dtype)
+    )
+    lat = lat / inv_std + mean
 
     with torch.no_grad():
-        decoded = vae.decode(decode_in).sample
+        decoded = vae.decode(lat, return_dict=False)[0][:, :, 0]  # 3D VAE -> first frame
+    image = pipeline.image_processor.postprocess(decoded, output_type="pil")[0]
 
-    decoded = (decoded / 2 + 0.5).clamp(0, 1)
-    # Take the first sample in the batch for the preview.
-    tensor = decoded[0].detach().to(dtype=torch.float32, device="cpu")
-    array = (tensor.permute(1, 2, 0).numpy() * 255).round().astype("uint8")
-
-    from PIL import Image
-
-    image = Image.fromarray(array)
-    width, height = image.size
-    longest = max(width, height)
+    w, h = image.size
+    longest = max(w, h)
     if longest > max_edge:
         scale = max_edge / float(longest)
-        image = image.resize((max(1, int(width * scale)), max(1, int(height * scale))))
+        image = image.resize((max(1, int(w * scale)), max(1, int(h * scale))))
     return image
 
 
