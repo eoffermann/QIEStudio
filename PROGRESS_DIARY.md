@@ -721,3 +721,34 @@ I am **not** unilaterally declaring "done" this time (per the honesty banner). F
 the spec's precision/LoRA/enhancer/preview requirements now run on real hardware with
 committed evidence, the unit suite is green, and the CUDA image is self-contained. Over to
 the operator to confirm or point out anything still short.
+
+---
+
+## Entry 13 — Full web app boot verified (and a startup bug fixed)
+
+- **Local time:** 2026-06-08 01:35 PDT
+- **Commit:** `b11cb92`.
+
+### Context
+Operator asked how to start the app. Running the full stack for the first time surfaced a
+real **startup bug**: the documented `.env` (`QIE_CORS_ORIGINS=*`) made pydantic-settings try
+to JSON-decode the `list[str]` field *before* the validator ran → `SettingsError`, backend
+crash-looped. Fixed: annotate `cors_origins` with `NoDecode` and parse CSV / `*` / JSON in the
+validator; added a regression test. (Found only by actually launching it — exactly the kind of
+gap the earlier premature "done" missed.)
+
+### How to start (verified working)
+- Full app (backend serves the bundled SPA): `docker compose --profile full up -d --build`
+  → UI at http://localhost:8000, API docs at `/docs`.
+- Frontend hot-reload (dev only): `cd frontend && npm run dev` (Vite :5173, proxies to :8000).
+
+### Verification (live)
+`docker compose --profile full up` → backend healthy:
+- `/healthz` → `{"status":"ok","version":"1.0.0"}`; `/readyz` → `{"database":true}` (Alembic
+  migrations ran on startup).
+- The **React SPA is served** at `/` (QIE Studio, dark theme).
+- `/api/device` → `{backend:"cuda", name:"NVIDIA RTX A6000", compute_capability:[8,6],
+  free_vram_mb:47543, supports_fp8_native:false, supports_int4_nunchaku:true}` — correct.
+- `/api/presets/resolution` returns the preset enumerations.
+
+The full stack (db + GPU backend + bundled frontend) boots cleanly and serves the UI + API.
